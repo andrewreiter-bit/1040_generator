@@ -168,6 +168,18 @@ export function saltCap(taxYear: number, status: FilingStatus, modifiedAgi: numb
   return Math.max(40000 * half - 0.3 * over, 10000 * half);
 }
 
+/**
+ * Social Security Benefits Worksheet (Form 1040 instructions, lines 6a/6b; § 86):
+ * base amounts and the second-tier amounts (not indexed). MFS who lived with the
+ * spouse at any time during the year use $0 for both.
+ */
+export const SOCIAL_SECURITY_TAXABILITY = {
+  base: { joint: 32000, other: 25000 },
+  secondTier: { joint: 9000, other: 6000 },
+  firstTierRate: 0.5,
+  secondTierRate: 0.85,
+};
+
 export const EDUCATOR_EXPENSE_LIMIT = 300;
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
 /** § 199A deduction rate. */

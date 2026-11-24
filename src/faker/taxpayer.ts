@@ -174,6 +174,18 @@ export interface RentalProperty {
   };
 }
 
+/** Form SSA-1099 (Social Security benefit statement). */
+export interface SSA1099 {
+  /** Omitted = primary taxpayer. A spouse's SSA-1099 appears only on MFJ returns. */
+  recipient?: "primary" | "spouse";
+  benefitsPaid: number;      // box 3
+  benefitsRepaid: number;    // box 4
+  netBenefits: number;       // box 5 = 3 − 4 (Form 1040 line 6a)
+  federalWithheld: number;   // box 6
+  /** Medicare premiums withheld (part of box 3; deductible only on Schedule A). */
+  medicarePremiums?: number;
+}
+
 /** Form 1099-G box 1 unemployment compensation (Schedule 1 line 7). */
 export interface Unemployment1099G {
   /** Omitted = primary taxpayer. A spouse's 1099-G appears only on MFJ returns. */
@@ -256,9 +268,17 @@ export interface FakeTaxpayer {
   rentalIncome: number | null;
   /** Net capital gain/loss as a bare figure (legacy); ignored when `capitalSales` is present. */
   capitalGains: number | null;
+  /** Net Social Security benefits as a bare figure (legacy); ignored when `ssa1099s` is present. */
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Social Security benefits. When present, `socialSecurityBenefits` is ignored. */
+  ssa1099s?: SSA1099[];
+  /** MFS only: lived with the spouse at any time during the year (Social Security base amount $0). Omitted = yes. */
+  mfsLivedWithSpouse?: boolean;
+  /** Legally blind at year end (additional standard deduction). */
+  blind?: boolean;
+  spouseBlind?: boolean;
   /** Schedule A detail. When present, `itemizedDeductionTotal` is ignored. */
   itemized?: ItemizedDeductions;
   /** Schedule E Part I rentals. When present, `rentalIncome` is ignored. */

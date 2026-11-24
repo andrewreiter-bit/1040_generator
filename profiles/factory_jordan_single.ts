@@ -10,7 +10,7 @@ import {
 import { ssWageBase } from "./tax-year";
 import { buildScheduleC } from "./schedule-c";
 import { buildCapitalSales } from "./capital";
-import { buildItemized, buildRental } from "./schedules-ae";
+import { buildItemized, buildRental, buildSsa1099 } from "./schedules-ae";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -215,6 +215,11 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   if (taxpayer.rentalIncome != null) {
     taxpayer.rentals = [buildRental(faker, taxpayer.rentalIncome)];
   }
+  // SSA-1099 behind the drawn benefits, and a rare blind taxpayer (also after every existing draw).
+  if (taxpayer.socialSecurityBenefits != null) {
+    taxpayer.ssa1099s = [buildSsa1099(faker, taxpayer.socialSecurityBenefits)];
+  }
+  taxpayer.blind = faker.datatype.boolean({ probability: 0.02 });
   return taxpayer;
 }
 

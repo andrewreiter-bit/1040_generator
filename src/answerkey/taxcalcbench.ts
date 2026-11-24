@@ -115,6 +115,8 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS1040ScheduleD", element: "NetLTCapitalGainOrLossAmt", label: "Sch D 15", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line15] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTAndLTCapitalGainOrLossAmt", label: "Sch D 16", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line16] : []) },
   { form: "IRS1040", element: "TaxableInterestAmt", label: "1040 2b", pick: (r) => [r.taxableInterest] },
+  { form: "IRS1040", element: "SocSecBnftAmt", label: "1040 6a", pick: (r) => [r.socialSecurity.line1] },
+  { form: "IRS1040", element: "TaxableSocSecAmt", label: "1040 6b", pick: (r) => [r.socialSecurity.taxable] },
   { form: "IRS1040Schedule8812", element: "CTCODCAfterAGILimitAmt", label: "8812 12", pick: (r) => (r.schedule8812.required ? [r.schedule8812.afterPhaseout] : []) },
   { form: "IRS1040Schedule8812", element: "ACTCBeforeLimitAmt", label: "8812 16a", pick: (r) => (r.schedule8812.required ? [r.schedule8812.partII.line16a] : []) },
   { form: "IRS1040Schedule8812", element: "NetEarnedIncomeCalculatedAmt", label: "8812 20", pick: (r) => (r.schedule8812.required ? [r.schedule8812.partII.line20] : []) },
@@ -156,7 +158,7 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^w2\[\]\.(who_applies_to|ein|employer_(name|street_address|city|state|zip)|wages|withholding|social_security_(wages|tax|tips)|medicare_(wages_and_tips|tax_withheld)|retirement_plan|third_party_sick_pay)$/,
   /^w2\[\]\.w2_state_local_tax_grp\[\]\./,
   /^w2\[\]\.other_deductions\[\]\./,          // box 14: informational
-  /^irs1040_scheduleb\.irs1099_int\[\]\.(interest_1099int_(who_applies_to|payer|payer_ein|interest|fed_inc_tax_withheld)|int_payer_\w+|irs1099_int_state\[\]\.\w+)$/,
+  /^irs1040_scheduleb\.irs1099_int\[\]\.(interest_1099int_(who_applies_to|payer|payer_ein|interest|fed_inc_tax_withheld|early_withdrawal)|int_payer_\w+|irs1099_int_state\[\]\.\w+)$/,
   /^irs1040_scheduleb\.irs1099_div\[\]\.dividend_1099div_(who_applies_to|payer|ordinary_div|qualified_div|capital_gain_distr|nondividend_distributions)$/,
   /^irs_payment\./,                            // direct debit of a balance due
   // Schedule C: identity, Part I questions, income and expense lines. wages_paid / UBIA /
@@ -174,6 +176,9 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs8949\.irs1099_b_grp\[\]\.(payer_name|who_applies_to)$/,
   /^irs8949\.irs1099_b_grp\[\]\.irs1099_b\[\]\.(acquired_dt|sold_disposed_dt|desc_of_prop|proceeds|cost_basis|input_irs8949_code|input_irs8949_code_summary|input_sale_term|reporting_method_input|wash_sale_loss|accrued_market_discount|payer_ein|fed_inc_tax_wh)$/,
   /^irs1040_schedule_d\.(st|lt)_capital_loss_carryover_input$/,
+  // SSA-1099. Medicare / drug premiums matter only when itemizing (no bench case itemizes).
+  /^ssa_1099\.ssa_1099_grp\[\]\.ssa_(who_applies_to|net_benefits|federal_withholding|medicare_premiums|prescription_drug_premiums)$/,
+  /^irs1040\.(tp_blind|sp_blind)$/,
   // Schedule 1: unemployment (1099-G), educator expenses, student loan interest.
   /^irs1040_schedule1\.irs1099_g\[\]\.(g_payer_\w+|g_who_applies_to|g_unemployment_comp|g_fed_wh|g_amount_repaid_current_year)$/,
   /^irs1040_schedule1\.irs1099_g\[\]\.irs1099_g_state\[\]\.\w+$/,
@@ -310,7 +315,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     payerName: String(val(i, "interest_1099int_payer") ?? ""),
     payerTin: String(val(i, "interest_1099int_payer_ein") ?? ""),
     interestIncome: num(val(i, "interest_1099int_interest")),
-    earlyWithdrawalPenalty: 0,
+    earlyWithdrawalPenalty: num(val(i, "interest_1099int_early_withdrawal")),
     usSavingsBondInterest: 0,
     federalWithheld: num(val(i, "interest_1099int_fed_inc_tax_withheld")),
   }));
@@ -416,6 +421,16 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
         federalWithheld: num(val(b, "fed_inc_tax_wh")),
       };
     }));
+  const ssa1099s = list(rd.ssa_1099, "ssa_1099_grp").map((g) => {
+    if (num(val(g, "ssa_lump_sum_benefits"))) outOfScope.add("Social Security lump-sum payment for prior years (Pub 915)");
+    const net = num(val(g, "ssa_net_benefits"));
+    return {
+      recipient: (val(g, "ssa_who_applies_to") === "spouse" ? "spouse" : "primary") as "primary" | "spouse",
+      benefitsPaid: net, benefitsRepaid: 0, netBenefits: net,
+      federalWithheld: num(val(g, "ssa_federal_withholding")),
+      medicarePremiums: num(val(g, "ssa_medicare_premiums")) || undefined,
+    };
+  });
   const schD = rd.irs1040_schedule_d;
   const capitalLossCarryover = {
     shortTerm: num(val(schD, "st_capital_loss_carryover_input")),
@@ -500,6 +515,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     unemployment1099Gs,
     capitalSales,
     capitalLossCarryover,
+    ssa1099s,
+    blind: val(f1040, "tp_blind") === true,
+    spouseBlind: val(f1040, "sp_blind") === true,
     educatorExpenses: educator
       ? { primary: num(val(schedule1, "tp_educator_exp_amount")), spouse: num(val(schedule1, "sp_educator_exp_amount")) }
       : undefined,

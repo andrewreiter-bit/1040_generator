@@ -35,6 +35,7 @@ import { Rounder, rounderFor, sumWith } from "./rounding";
 import { CapitalResult, computeCapital } from "./capital";
 import { ScheduleALines, scheduleA } from "./itemized";
 import { ScheduleELines, scheduleE } from "./rental";
+import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -45,6 +46,7 @@ export interface Schedule1Lines {
   educatorExpenses: number;    // 11
   seTaxDeduction: number;      // 15
   healthInsurance: number;     // 17
+  earlyWithdrawalPenalty: number; // 18 (1099-INT box 2)
   studentLoanInterest: number; // 21
   adjustments: number;         // 26 → 1040 line 10
   required: boolean;
@@ -75,6 +77,10 @@ export interface ReturnLines {
   netCapitalGain: number;
   scheduleDRequired: boolean;
   capital: CapitalResult;
+  /** Lines 6a / 6b. */
+  socialSecurity: SocialSecurityLines;
+  youBlind: boolean;
+  spouseBlind: boolean;
   /** Line 12: standard deduction (with the 65+ add-on) or Schedule A, whichever is larger. */
   standardDeductionAmount: number;
   itemizes: boolean;
@@ -192,7 +198,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   if (schE?.columns.some((c) => c.net < 0)) unsupported.push("rental loss (passive activity limits, Form 8582)");
   if ((schE?.columns.length ?? 0) > 3) unsupported.push("more than three rental properties (Schedule E continuation page)");
   const rentalIncome = schE?.line26 ?? 0;
-  if (t.socialSecurityBenefits != null) unsupported.push("taxable Social Security benefits (line 6b worksheet)");
+  if (t.socialSecurityBenefits != null && !t.ssa1099s?.length) {
+    unsupported.push("Social Security benefits given only as a net figure (no SSA-1099 detail)");
+  }
 
   // ── Schedule C / SE ───────────────────────────────────────────────────────
   const scheduleCs = includedScheduleCs(t).map((b) => scheduleC(b, t.taxYear, R));
@@ -213,22 +221,31 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   ]);
   const seTaxDeduction = sum(scheduleSEs.map((s) => s.deduction));
   const healthInsurance = bizDed.healthInsuranceTotal;
-  const totalIncome = round2(wages + taxableInterest + ordinaryDividends + capitalGain + additionalIncome);
+  const earlyWithdrawalPenalty = sum(t.interest1099s.map((i) => i.earlyWithdrawalPenalty ?? 0));
+  // Lines 6a/6b: the worksheet uses every other income line and the adjustments other
+  // than student loan interest (whose own worksheet uses line 9, so it comes after).
+  const socialSecurity = socialSecurityWorksheet(
+    t,
+    round2(wages + taxableInterest + ordinaryDividends + capitalGain + additionalIncome),
+    sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]),
+    R,
+  );
+  const totalIncome = round2(wages + taxableInterest + ordinaryDividends + socialSecurity.taxable + capitalGain + additionalIncome);
 
   // Student Loan Interest Deduction Worksheet (not allowed on MFS).
   let studentLoanInterest = 0;
   if ((t.studentLoanInterestPaid ?? 0) > 0 && t.filingStatus !== "MFS") {
     const w1 = Math.min(t.studentLoanInterestPaid!, STUDENT_LOAN_INTEREST.max);
-    const w4 = round2(totalIncome - (educatorExpenses + seTaxDeduction + healthInsurance));
+    const w4 = round2(totalIncome - (educatorExpenses + seTaxDeduction + healthInsurance + earlyWithdrawalPenalty));
     const start = joint ? c.studentLoanPhaseoutStart.joint : c.studentLoanPhaseoutStart.other;
     const range = joint ? STUDENT_LOAN_INTEREST.phaseoutRange.joint : STUDENT_LOAN_INTEREST.phaseoutRange.other;
     const w6 = Math.min(1, Math.round((Math.max(0, w4 - start) / range) * 1000) / 1000);
     studentLoanInterest = round2(w1 - round2(w1 * w6));
   }
-  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, studentLoanInterest]);
+  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, studentLoanInterest]);
   const schedule1: Schedule1Lines = {
     businessIncome, rentalIncome, unemployment, unemploymentRepaid, additionalIncome, educatorExpenses, seTaxDeduction,
-    healthInsurance, studentLoanInterest, adjustments,
+    healthInsurance, earlyWithdrawalPenalty, studentLoanInterest, adjustments,
     required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0 || !!schE,
   };
 
@@ -239,7 +256,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const spouseIs65 = t.filingStatus === "MFJ" && is65OrOlder(t.spouseDateOfBirth, t.taxYear);
   // Line 12: the larger of the standard deduction and Schedule A. (Assumes an MFS spouse
   // doesn't itemize, which would force itemizing here; the model can't see that return.)
-  const boxes = (youAre65 ? 1 : 0) + (spouseIs65 ? 1 : 0);
+  const youBlind = !!t.blind;
+  const spouseBlind = t.filingStatus === "MFJ" && !!t.spouseBlind;
+  const boxes = [youAre65, youBlind, spouseIs65, spouseBlind].filter(Boolean).length;
   const standardDeductionAmount = standardDeduction(t.taxYear, t.filingStatus) + boxes * additionalStandardDeduction(t.taxYear, t.filingStatus);
   const schA = t.itemized ? scheduleA(t, agi, R) : undefined;
   const legacyItemized = !t.itemized && !t.takesStandardDeduction && t.itemizedDeductionTotal != null ? round2(t.itemizedDeductionTotal) : undefined;
@@ -300,6 +319,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     t.otherForm1099Withholding ?? 0,
     capital.federalWithheld,
     ...g1099s.map((g) => g.federalWithheld),
+    socialSecurity.federalWithheld,
   ]);
   const otherWithholding = f8959.additionalWithheld;
   const totalWithholding = round2(w2Withholding + form1099Withholding + otherWithholding);
@@ -343,9 +363,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   const result: ReturnLines = {
     wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
-    capitalGain, netCapitalGain, scheduleDRequired, capital, standardDeductionAmount, itemizes,
+    capitalGain, netCapitalGain, scheduleDRequired, capital, socialSecurity, standardDeductionAmount, itemizes,
     scheduleA: itemizes ? schA : undefined, scheduleE: schE, additionalIncome, totalIncome, adjustments, agi,
-    youAre65, spouseIs65, deduction, qbiDeduction, totalDeductions, taxableIncome,
+    youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, totalDeductions, taxableIncome,
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,

@@ -230,7 +230,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   eq(1, "1040-12-deduction", k("line12"), deductionAmount(t));
 
   // Arithmetic chain
-  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line7")) + n0(k("line8")));
+  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line6b")) + n0(k("line7")) + n0(k("line8")));
   eq(1, "1040-15-taxable-income", k("line15"), Math.max(0, n0(k("line11")) - n0(k("line14"))));
 
   // A dependent can't be born after the tax year
@@ -246,6 +246,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   const r = computeReturn(t);
   eq(2, "1040-7-capital-gain", k("line7"), r.capitalGain);
   const lineChecks: Array<[string, string, number]> = [
+    ["6a", "line6a", r.socialSecurity.line1], ["6b", "line6b", r.socialSecurity.taxable],
     ["8", "line8", r.additionalIncome], ["9", "line9", r.totalIncome], ["10", "line10", r.adjustments],
     ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["14", "line14", r.totalDeductions],
     ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
@@ -262,8 +263,12 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
 
   const banking = ["routing", "account"].every((x) => (k(x) ?? "") !== "");
   checks.push({ phase: 2, id: "1040-direct-deposit-only-with-refund", ok: banking === r.refund > 0, detail: `refund ${money(r.refund)}, banking ${banking ? "filled" : "blank"}` });
-  const ageOk = (k("youBornBefore") === "Yes") === r.youAre65 && (k("spouseBornBefore") === "Yes") === r.spouseIs65;
-  checks.push({ phase: 2, id: "1040-age-65-boxes", ok: ageOk, detail: `you ${r.youAre65 ? "65+" : "<65"}, spouse ${r.spouseIs65 ? "65+" : "<65"}` });
+  const ageOk = (k("youBornBefore") === "Yes") === r.youAre65 && (k("spouseBornBefore") === "Yes") === r.spouseIs65 &&
+    (k("youBlind") === "Yes") === r.youBlind && (k("spouseBlind") === "Yes") === r.spouseBlind;
+  checks.push({ phase: 2, id: "1040-age-65-and-blind-boxes", ok: ageOk, detail: `you ${r.youAre65 ? "65+" : "<65"}${r.youBlind ? " blind" : ""}, spouse ${r.spouseIs65 ? "65+" : "<65"}${r.spouseBlind ? " blind" : ""}` });
+  if (t.socialSecurityBenefits != null && t.ssa1099s?.length) {
+    eq(2, "1040-6a-equals-profile-benefits", k("line6a"), t.socialSecurityBenefits);
+  }
 
   // Income the generator cannot yet carry through to the 1040
   checks.push({ phase: 2, id: "household-within-supported-scope", ok: !r.unsupported.length, detail: r.unsupported.join("; ") || undefined });

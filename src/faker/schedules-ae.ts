@@ -18,7 +18,7 @@
  *   earlier year (no Form 4562). Addresses are synthetic.
  */
 import { Faker } from "@faker-js/faker";
-import { FakeTaxpayer, ItemizedDeductions, RentalProperty } from "./taxpayer";
+import { FakeTaxpayer, ItemizedDeductions, RentalProperty, SSA1099 } from "./taxpayer";
 import { saltCap } from "../config/tax-year";
 import { includedW2s } from "../tax/household";
 import { scheduleE } from "../tax/rental";
@@ -83,4 +83,20 @@ export function buildRental(faker: Faker, targetNet: number): RentalProperty {
   const drift = round2(targetNet - scheduleE([property], cents).columns[0].net);
   if (drift !== 0) property.rents = round2(property.rents + drift);
   return property;
+}
+
+/**
+ * Form SSA-1099 behind the profile's drawn net Social Security benefits (box 5).
+ * About a third of recipients have voluntary withholding at a Form W-4V rate.
+ */
+export function buildSsa1099(faker: Faker, netBenefits: number): SSA1099 {
+  const withholds = faker.datatype.boolean({ probability: 0.35 });
+  const rate = faker.helpers.arrayElement([0.07, 0.1, 0.12, 0.22]);
+  return {
+    recipient: "primary",
+    benefitsPaid: netBenefits,
+    benefitsRepaid: 0,
+    netBenefits,
+    federalWithheld: withholds ? round2(netBenefits * rate) : 0,
+  };
 }
