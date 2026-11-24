@@ -3,9 +3,9 @@ import path from "path";
 import https from "https";
 import http from "http";
 import { FormEntry } from "../registry/forms";
+import { formsDir } from "../config/paths";
 
 const CACHE_DIR = path.resolve(process.cwd(), "cache");
-const FORMS_DIR = path.resolve(process.cwd(), "forms");
 
 // IRS blocks default Node.js UA — spoof a browser
 const USER_AGENT =
@@ -48,6 +48,7 @@ export async function downloadForm(form: FormEntry): Promise<string> {
   }
 
   await fs.ensureDir(CACHE_DIR);
+  const FORMS_DIR = formsDir();
   await fs.ensureDir(FORMS_DIR);
 
   const cachePath = path.join(CACHE_DIR, `${form.id}.pdf`);

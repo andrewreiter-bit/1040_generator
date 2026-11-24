@@ -97,6 +97,7 @@ All functionality is available through `npm run` commands. Pass additional flags
 | `npm run fill:common` | Fill the 10 most common forms (1040, W-2, Schedules A–SE, 1099s) |
 | `npm run fill:merge` | Fill all forms and merge output into one PDF |
 | `npm run forms` | List all available form IDs and display names |
+| `npm run validate` | Fill the common forms for each profile × year (2023–2025) and check household/cross-form consistency |
 | `npm run build` | Compile TypeScript to `/dist/` |
 | `npm run start` | Run the compiled build |
 
@@ -496,6 +497,24 @@ merged_{timestamp}.pdf             # merged bundle (--merge)
 ```
 
 The PDFs are **flattened** — form fields are rendered into the page content so values are visible in any PDF viewer without interactive form support.
+
+### Blank vs. random fields
+
+Fields that don't correspond to taxpayer data (e.g. Form 1040 line 1c tip income, W-2 box 12 codes) are left **blank**, and checkboxes are left unchecked unless a rule sets them, so every amount on a return ties back to the household. Form 1040 uses an explicit per-year field map (`src/fieldmaps/f1040.ts`) for filing status, spouse, dependents, and the income/deduction lines.
+
+To restore the old behaviour of filling every box with random values (useful for OCR/layout stress tests), set `FILL_UNMAPPED=random`.
+
+### Consistency checks
+
+`npm run validate` fills the common form set straight from the `forms_<year>` / `templates_<year>` snapshots (it does not touch `forms/`, `templates/`, or `src/faker/factory.ts`) and prints per-form metrics plus checks such as "exactly one filing status", "W-2 box 1 = 1040 line 1a", and "no text in numeric fields". Each check is tagged with the fix-plan phase that owns it; the command exits non-zero only for failing checks at or below `--gate` (default `1`).
+
+```bash
+npm run validate
+npm run validate -- --profiles rivera_mfj --years 2025 --keep   # keep the filled PDFs
+npm run validate -- --gate 2 --json report.json
+```
+
+`FORMS_DIR`, `TEMPLATES_DIR`, and `OUTPUT_DIR` env vars override the default `forms/`, `templates/`, and `output/` directories for any command.
 
 ---
 

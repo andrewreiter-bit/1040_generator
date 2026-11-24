@@ -103,6 +103,9 @@ const RULES: Array<[RegExp, FieldType, string]> = [
   [/foreign country|country name/i,                 "country",        "Country"],
   [/foreign province|foreign postal/i,              "street_address", "Foreign Province / Postal Code"],
   [/firm.{0,10}address|employer.{0,10}address|payer.{0,10}address/i, "street_address", "Business Address"],
+  // Bare "Address." box (e.g. W-4 Step 1 "1(a). Address.") — anchored so long
+  // instructions that merely mention an address don't match.
+  [/(^|\.\s*)address\.?\s*$/i,                      "street_address", "Street Address"],
 
   // ── Dates ──────────────────────────────────────────────────────────────────
   [/date of birth|birth date/i,                     "date",           "Date of Birth"],

@@ -15,6 +15,7 @@ import chalk from "chalk";
 import path from "path";
 import { runBatch, parseFormSpecs } from "../src/pipeline/batch";
 import { mergePdfs } from "../src/merger/index";
+import { outputDir } from "../src/config/paths";
 
 const program = new Command();
 program
@@ -72,5 +73,5 @@ const opts = program.opts();
     }
   }
 
-  console.log(chalk.gray(`\n  Output → ${path.resolve(process.cwd(), "output")}\n`));
+  console.log(chalk.gray(`\n  Output → ${outputDir()}\n`));
 })();
