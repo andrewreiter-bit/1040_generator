@@ -10,7 +10,7 @@ import {
 import { ssWageBase } from "./tax-year";
 import { buildScheduleC } from "./schedule-c";
 import { buildCapitalSales } from "./capital";
-import { buildItemized, buildRental, buildSsa1099 } from "./schedules-ae";
+import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -238,6 +238,10 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
     taxpayer.ssa1099s = [buildSsa1099(faker, taxpayer.socialSecurityBenefits)];
   }
   taxpayer.blind = faker.datatype.boolean({ probability: 0.02 });
+  // About a quarter of rentals run at a loss (Form 8582 passive limits); last draw, so nothing earlier moves.
+  if (taxpayer.rentals?.length && faker.datatype.boolean({ probability: 0.25 })) {
+    taxpayer.rentalIncome = makeRentalLoss(faker, taxpayer.rentals[0]);
+  }
   return taxpayer;
 }
 

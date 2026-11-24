@@ -44,6 +44,7 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   const out: string[] = [];
   if (r.itemizes && r.scheduleA) out.push("f1040sa");
   if (r.scheduleE) out.push("f1040se");
+  if (r.form8582?.required) out.push("f8582");
   if (r.capital.scheduleD) out.push("f1040sd");
   if (r.capital.rows.some((x) => !x.directToScheduleD)) out.push("f8949");
   if (r.schedule1.required) out.push("f1040s1");
@@ -81,6 +82,7 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f1040sd": return single(formId, t, "Schedule D");
     case "f1040sa": return single(formId, t, "Schedule A");
     case "f1040se": return single(formId, t, "Schedule E");
+    case "f8582":   return single(formId, t, "Form 8582");
     case "f1099b": {
       if (!getFieldMap("f1099b", t.taxYear)) return [];
       const sales = reportedSales(t);

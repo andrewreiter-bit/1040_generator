@@ -23,7 +23,8 @@ export interface RentalColumn {
   expenseLines: Record<string, number>; // 5–19
   totalExpenses: number;               // 20
   net: number;                         // 21
-  deductibleLoss: number;              // 22 (≤ 0; only when 21 is a loss)
+  /** 22: the loss allowed after the passive activity limits (≤ 0; only when 21 is a loss). */
+  deductibleLoss: number;
 }
 
 export interface ScheduleELines {
@@ -34,16 +35,21 @@ export interface ScheduleELines {
   line26: number;                      // → Schedule 1 line 5
 }
 
-export function scheduleE(rentals: RentalProperty[], R: Rounder): ScheduleELines {
+/**
+ * @param allowedLosses Form 8582 Part VIII allowed loss per rental (positive);
+ *   omitted = every loss allowed in full.
+ */
+export function scheduleE(rentals: RentalProperty[], R: Rounder, allowedLosses?: number[]): ScheduleELines {
   const sum = (xs: number[]) => sumWith(R, xs);
-  const columns = rentals.map((p): RentalColumn => {
+  const columns = rentals.map((p, i): RentalColumn => {
     const rents = R(p.rents);
     const royalties = R(p.royalties);
     const expenseLines: Record<string, number> = {};
     for (const [line, key] of RENTAL_EXPENSE_LINES) expenseLines[line] = R(p.expenses[key] ?? 0);
     const totalExpenses = sum(Object.values(expenseLines));
     const net = R(rents + royalties - totalExpenses);
-    return { property: p, rents, royalties, expenseLines, totalExpenses, net, deductibleLoss: net < 0 ? net : 0 };
+    const deductibleLoss = net < 0 ? (allowedLosses ? -R(allowedLosses[i] ?? 0) : net) : 0;
+    return { property: p, rents, royalties, expenseLines, totalExpenses, net, deductibleLoss };
   });
   const line23a = sum(columns.map((c) => c.rents));
   const line23b = sum(columns.map((c) => c.royalties));

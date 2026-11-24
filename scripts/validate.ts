@@ -37,7 +37,7 @@ import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -528,6 +528,16 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     });
     checks.push({ phase: 2, id: "schE-columns-tie-out", ok: !colBad.length, detail: colBad.length ? `column(s) ${colBad.join(", ")}` : undefined });
     if (docs.f8960?.length) tie(2, "8960-4a-equals-schE-26", n0(m60("line4a")), n0(se("line26")), "Form 8960 line 4a vs Schedule E line 26");
+    // Schedule E line 22 = the loss allowed after the passive limits (Form 8582 Part VIII, or all of it).
+    const line22 = round2(["A", "B", "C"].reduce((a, k) => a + n0(se(`line22.${k}`)), 0));
+    const allowed = r.form8582 ? r.form8582.activities.reduce((a, x) => a + x.allowed, 0) : 0;
+    tie(2, "schE-22-equals-allowed-loss", -line22, allowed, "−Σ Schedule E line 22 vs allowed passive loss");
+    const f8582run = docs.f8582?.[0];
+    if (f8582run && r.form8582!.line3 < 0) {
+      const q8 = keyed(f8582run, "f8582");
+      tie(2, "8582-11-equals-9-plus-10", n0(q8("line11")), round2(n0(q8("line9")) + n0(q8("line10"))), "Form 8582 line 11 vs 9 + 10");
+      if (r.form8582!.unallowedCarryforward > 0) tie(2, "8582-partVIII-equals-schE-22", n0(q8("partVIII.total.c")), -line22, "Form 8582 Part VIII allowed vs −Σ Schedule E line 22");
+    }
   }
 
   // ── Schedule 8812 / Schedule EIC ────────────────────────────────────────────
@@ -547,7 +557,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8959", "f8960", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8959", "f8960", "f8582", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

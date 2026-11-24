@@ -100,3 +100,14 @@ export function buildSsa1099(faker: Faker, netBenefits: number): SSA1099 {
     federalWithheld: withholds ? round2(netBenefits * rate) : 0,
   };
 }
+
+/**
+ * Turn an already-built rental into a loss (rents 55–95% of its expenses).
+ * Called after every other draw, so households keep all earlier values; the
+ * caller sets `rentalIncome` to the new Schedule E line 21.
+ */
+export function makeRentalLoss(faker: Faker, property: RentalProperty): number {
+  const total = round2(Object.values(property.expenses).reduce((s: number, v) => s + (v ?? 0), 0));
+  property.rents = round2(total * faker.number.float({ min: 0.55, max: 0.95, fractionDigits: 3 }));
+  return scheduleE([property], cents).columns[0].net;
+}

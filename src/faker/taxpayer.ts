@@ -164,6 +164,10 @@ export interface RentalProperty {
   fairRentalDays: number;            // 2
   personalUseDays: number;
   qualifiedJointVenture: boolean;
+  /** Actively participated (management decisions, ≥ 10% owner). Omitted = yes. */
+  activeParticipation?: boolean;
+  /** Prior-year unallowed passive loss carried forward (Form 8582 line 1c), as a positive amount. */
+  priorYearUnallowedLoss?: number;
   rents: number;                     // 3
   royalties: number;                 // 4
   expenses: {

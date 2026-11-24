@@ -36,6 +36,7 @@ import { Rounder, rounderFor, sumWith } from "./rounding";
 import { CapitalResult, computeCapital } from "./capital";
 import { ScheduleALines, scheduleA } from "./itemized";
 import { ScheduleELines, scheduleE } from "./rental";
+import { Form8582Lines, form8582 } from "./passive";
 import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
 
 export interface Schedule1Lines {
@@ -87,6 +88,7 @@ export interface ReturnLines {
   itemizes: boolean;
   scheduleA?: ScheduleALines;
   scheduleE?: ScheduleELines;
+  form8582?: Form8582Lines;
   additionalIncome: number;    // 8 (Schedule 1 line 10)
   totalIncome: number;         // 9
   adjustments: number;         // 10
@@ -198,10 +200,10 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   if (t.businessIncome != null && !t.scheduleCs?.length) unsupported.push("Schedule C business income given only as a net figure (no Schedule C detail)");
   if (t.rentalIncome != null && !t.rentals?.length) unsupported.push("rental income given only as a net figure (no Schedule E detail)");
-  const schE = t.rentals?.length ? scheduleE(t.rentals, R) : undefined;
-  if (schE?.columns.some((c) => c.net < 0)) unsupported.push("rental loss (passive activity limits, Form 8582)");
-  if ((schE?.columns.length ?? 0) > 3) unsupported.push("more than three rental properties (Schedule E continuation page)");
-  const rentalIncome = schE?.line26 ?? 0;
+  const schEBase = t.rentals?.length ? scheduleE(t.rentals, R) : undefined;
+  if ((schEBase?.columns.length ?? 0) > 3) unsupported.push("more than three rental properties (Schedule E continuation page)");
+  if (t.rentals?.some((p) => p.priorYearUnallowedLoss)) unsupported.push("prior-year unallowed passive losses (Form 8582 line 1c)");
+  if (t.rentals?.some((p) => p.activeParticipation === false)) unsupported.push("rental without active participation (Form 8582 Part V)");
   if (t.socialSecurityBenefits != null && !t.ssa1099s?.length) {
     unsupported.push("Social Security benefits given only as a net figure (no SSA-1099 detail)");
   }
@@ -218,7 +220,6 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const g1099s = (t.unemployment1099Gs ?? []).filter((g) => g.recipient !== "spouse" || joint);
   const unemploymentRepaid = sum(g1099s.map((g) => g.repaidThisYear));
   const unemployment = round2(sum(g1099s.map((g) => g.compensation)) - unemploymentRepaid);
-  const additionalIncome = round2(businessIncome + rentalIncome + unemployment);
   const educatorExpenses = sum([
     Math.min(t.educatorExpenses?.primary ?? 0, EDUCATOR_EXPENSE_LIMIT),
     joint ? Math.min(t.educatorExpenses?.spouse ?? 0, EDUCATOR_EXPENSE_LIMIT) : 0,
@@ -226,6 +227,24 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const seTaxDeduction = sum(scheduleSEs.map((s) => s.deduction));
   const healthInsurance = bizDed.healthInsuranceTotal;
   const earlyWithdrawalPenalty = sum(t.interest1099s.map((i) => i.earlyWithdrawalPenalty ?? 0));
+
+  // Form 8582: rental losses are limited using modified AGI — every AGI item except the
+  // passive loss, taxable Social Security, the SE-tax deduction and IRA / student loan
+  // interest deductions (net passive income, when there is any, stays in).
+  let f8582: Form8582Lines | undefined;
+  let schE = schEBase;
+  if (schEBase) {
+    const nets = schEBase.columns.map((c) => c.net);
+    const netPassive = sum(nets);
+    const modifiedAgi = round2(
+      wages + taxableInterest + ordinaryDividends + capitalGain + businessIncome + unemployment + Math.max(0, netPassive)
+      - (educatorExpenses + healthInsurance + earlyWithdrawalPenalty),
+    );
+    f8582 = form8582(t, nets, modifiedAgi, R);
+    schE = scheduleE(t.rentals!, R, f8582.activities.map((a) => a.allowed));
+  }
+  const rentalIncome = schE?.line26 ?? 0;
+  const additionalIncome = round2(businessIncome + rentalIncome + unemployment);
   // Lines 6a/6b: the worksheet uses every other income line and the adjustments other
   // than student loan interest (whose own worksheet uses line 9, so it comes after).
   const socialSecurity = socialSecurityWorksheet(
@@ -380,7 +399,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const result: ReturnLines = {
     wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
     capitalGain, netCapitalGain, scheduleDRequired, capital, socialSecurity, standardDeductionAmount, itemizes,
-    scheduleA: itemizes ? schA : undefined, scheduleE: schE, additionalIncome, totalIncome, adjustments, agi,
+    scheduleA: itemizes ? schA : undefined, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, totalCredits, taxAfterCredits, otherTaxes, totalTax,
