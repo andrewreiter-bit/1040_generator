@@ -27,7 +27,9 @@ import { fillForm, FillResult } from "../src/filler/index";
 import { getFieldMap, fieldNameForKey, FieldMap } from "../src/fieldmaps";
 import { deductionAmount } from "../src/fieldmaps/f1040";
 import { w4ChildrenAmount, w4OtherDependentsAmount } from "../src/fieldmaps/fw4";
-import { scheduleBDividendTotal, scheduleBInterestTotal } from "../src/fieldmaps/f1040sb";
+import { scheduleBDividendTotal, scheduleBInterestRows, scheduleBInterestTotal } from "../src/fieldmaps/f1040sb";
+import { form8949Copies } from "../src/fieldmaps/capital";
+import { scheduleEicChildren } from "../src/fieldmaps/credits";
 import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
@@ -35,8 +37,8 @@ import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960",
-  "fw2", "f1099int", "f1099div", "fw4",
+  "f8959", "f8960", "f8949", "f1040s8", "f1040sei",
+  "fw2", "f1099int", "f1099div", "f1099b", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
@@ -242,9 +244,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
 
   // Tax, credits and payments: the PDF's own formulas must agree with computeReturn
   const r = computeReturn(t);
-  const capitalDividends = t.dividend1099s.reduce((s, d) => s + d.totalCapitalGain, 0);
-  const expectedLine7 = t.capitalGains != null || capitalDividends !== 0 ? r.capitalGain : 0;
-  eq(2, "1040-7-capital-gain", k("line7"), expectedLine7);
+  eq(2, "1040-7-capital-gain", k("line7"), r.capitalGain);
   const lineChecks: Array<[string, string, number]> = [
     ["8", "line8", r.additionalIncome], ["9", "line9", r.totalIncome], ["10", "line10", r.adjustments],
     ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["14", "line14", r.totalDeductions],
@@ -334,7 +334,9 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     }).map((r) => r.label);
     checks.push({ phase: 1, id: "1099int-recipient-is-taxpayer", ok: !badRecipient.length, detail: badRecipient.join(", ") || undefined });
     const box1 = sumBy(intDocs, (r) => firstByLabel(r, /^1\. Interest income/));
-    checks.push({ phase: 1, id: "1099int-box1-total-equals-1040-2b", ok: near(box1, n0(line("line2b"))), detail: `Σ ${money(box1)} vs ${line("line2b")}` });
+    // Line 2b also carries accrued market discount recognized on sales (Schedule B, no 1099-INT).
+    const lessDiscount = round2(n0(line("line2b")) - computeReturn(t).capital.marketDiscountInterest);
+    checks.push({ phase: 1, id: "1099int-box1-total-equals-1040-2b", ok: near(box1, lessDiscount), detail: `Σ ${money(box1)} vs ${line("line2b")}` });
     const badPayer = intDocs.filter((r, i) => (firstByLabel(r, /PAYER.S name/i) ?? "") !== t.interest1099s[i]?.payerName).map((r) => r.label);
     checks.push({ phase: 2, id: "1099int-payers-match-records", ok: !badPayer.length, detail: badPayer.join(", ") || undefined });
   }
@@ -361,9 +363,10 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 2, id: "schB-4-equals-1040-2b", ok: near(n0(firstByLine(schB, "4")), n0(line("line2b"))), detail: `Sch B ${firstByLine(schB, "4")} vs ${line("line2b")}` });
     checks.push({ phase: 2, id: "schB-6-equals-1040-3b", ok: near(n0(kb("line6")), n0(line("line3b"))) && near(n0(kb("line6")), scheduleBDividendTotal(t)), detail: `Sch B ${kb("line6") || "(blank)"} vs ${line("line3b")}` });
     const rowProblems: string[] = [];
-    t.interest1099s.forEach((p, i) => { if (kb(`int${i + 1}.payer`) !== p.payerName || !near(num(kb(`int${i + 1}.amount`)), p.interestIncome)) rowProblems.push(`interest row ${i + 1}`); });
+    const intRows = scheduleBInterestRows(t);
+    intRows.forEach((p, i) => { if (kb(`int${i + 1}.payer`) !== p.payer || !near(num(kb(`int${i + 1}.amount`)), p.amount)) rowProblems.push(`interest row ${i + 1}`); });
     t.dividend1099s.forEach((p, i) => { if (kb(`div${i + 1}.payer`) !== p.payerName || !near(num(kb(`div${i + 1}.amount`)), p.ordinaryDividends)) rowProblems.push(`dividend row ${i + 1}`); });
-    if (kb(`int${t.interest1099s.length + 1}.payer`)) rowProblems.push("extra interest row");
+    if (kb(`int${intRows.length + 1}.payer`)) rowProblems.push("extra interest row");
     if (kb(`div${t.dividend1099s.length + 1}.payer`)) rowProblems.push("extra dividend row");
     checks.push({ phase: 2, id: "schB-payer-rows", ok: !rowProblems.length, detail: rowProblems.join(", ") || undefined });
   }
@@ -437,14 +440,107 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 2, id: "8995-businesses-fit", ok: r.scheduleC.length <= 5, detail: `${r.scheduleC.length} business(es); Form 8995 has 5 rows` });
   }
 
+  // ── Schedule D / Form 8949 ──────────────────────────────────────────────────
+  const cap = r.capital;
+  if (cap.rows.length) {
+    const badDates = cap.rows.filter((x) => {
+      const sold = x.sale.dateSold.split("/"), acq = x.sale.dateAcquired.split("/");
+      const soldKey = `${sold[2]}${sold[0]}${sold[1]}`, acqKey = `${acq[2]}${acq[0]}${acq[1]}`;
+      return Number(sold[2]) !== t.taxYear || (x.sale.dateAcquired !== "VARIOUS" && acqKey > soldKey);
+    }).map((x) => x.sale.description);
+    checks.push({ phase: 2, id: "capital-sale-dates", ok: !badDates.length, detail: badDates.join("; ") || undefined });
+    if (t.capitalGains != null) {
+      tie(2, "capital-sales-equal-profile-net", round2(cap.rows.reduce((a, x) => a + x.gain, 0)), t.capitalGains, "Σ Form 8949 (h) vs profile capitalGains");
+    }
+  }
+  const sdRun = docs.f1040sd?.[0];
+  if (sdRun) {
+    const sd = keyed(sdRun, "f1040sd");
+    const l16 = n0(sd("line16"));
+    const toLine7 = l16 > 0 ? l16 : -n0(sd("line21"));
+    tie(2, "schD-16-or-21-equals-1040-7", toLine7, n0(line("line7")), "Schedule D line 16 / 21 vs 1040 line 7");
+    tie(2, "schD-13-equals-1099div-2a", n0(sd("line13")), t.dividend1099s.reduce((a, d) => a + d.totalCapitalGain, 0), "Schedule D line 13 vs Σ 1099-DIV 2a");
+    const l7 = round2(["line1a", "line1b", "line2", "line3"].reduce((a, x) => a + n0(sd(`${x}.h`)), 0) - n0(sd("line6")));
+    const l15 = round2(["line8a", "line8b", "line9", "line10"].reduce((a, x) => a + n0(sd(`${x}.h`)), 0) + n0(sd("line13")) - n0(sd("line14")));
+    checks.push({ phase: 2, id: "schD-lines-tie-out", ok: near(n0(sd("line7")), l7) && near(n0(sd("line15")), l15) && near(l16, round2(l7 + l15)),
+      detail: `7 ${sd("line7")} (Σ ${money(l7)}), 15 ${sd("line15")} (Σ ${money(l15)}), 16 ${sd("line16")}` });
+    // Form 8949 copies add up to the Schedule D line for each box.
+    const f8949 = docs.f8949 ?? [];
+    if (f8949.length) {
+      const copies = form8949Copies(t);
+      const byBox: Record<string, number> = {};
+      f8949.forEach((run, i) => {
+        const q = keyed(run, "f8949");
+        if (copies[i]?.short) byBox[copies[i].short!.box] = round2((byBox[copies[i].short!.box] ?? 0) + n0(q("p1.total.h")));
+        if (copies[i]?.long) byBox[copies[i].long!.box] = round2((byBox[copies[i].long!.box] ?? 0) + n0(q("p2.total.h")));
+      });
+      const LINE: Record<string, string> = { A: "line1b", B: "line2", C: "line3", D: "line8b", E: "line9", F: "line10" };
+      const bad = Object.entries(LINE).filter(([box, l]) => !near(byBox[box] ?? 0, n0(sd(`${l}.h`)))).map(([box, l]) => `box ${box}: 8949 ${money(byBox[box] ?? 0)} vs ${l} ${sd(`${l}.h`) || "(blank)"}`);
+      checks.push({ phase: 2, id: "8949-totals-equal-schD", ok: !bad.length, detail: bad.join("; ") || undefined });
+    }
+    // One Form 1099-B per sale the broker reported; their proceeds tie to the return.
+    const bDocs = docs.f1099b ?? [];
+    const reported = cap.rows.filter((x) => x.sale.reporting !== "noForm1099B");
+    if (getFieldMap("f1099b", t.taxYear)) {
+      checks.push({ phase: 2, id: "1099b-one-per-reported-sale", ok: bDocs.length === reported.length, detail: `${bDocs.length} 1099-B(s), ${reported.length} reported sale(s)` });
+      const box1d = round2(bDocs.reduce((a, run) => {
+        const m = getFieldMap("f1099b", t.taxYear)!;
+        const name = Object.entries(m.fields).find(([, v]) => v.key === "CopyB.box1d")?.[0];
+        return a + n0(name ? run.result.fieldValues[name] : undefined);
+      }, 0));
+      const schDProceeds = round2(["line1a", "line1b", "line2", "line8a", "line8b", "line9"].reduce((a, x) => a + n0(sd(`${x}.d`)), 0));
+      tie(2, "1099b-proceeds-equal-schD", box1d, schDProceeds, "Σ 1099-B box 1d vs Schedule D (d), boxes A/B/D/E");
+    }
+  }
+
+  // ── Schedule A / Schedule E ─────────────────────────────────────────────────
+  const saRun = docs.f1040sa?.[0];
+  if (saRun && r.scheduleA) {
+    const sa = keyed(saRun, "f1040sa");
+    tie(2, "schA-17-equals-1040-12", n0(sa("line17")), n0(line("line12")), "Schedule A line 17 vs 1040 line 12");
+    const box17 = round2(includedW2s(t).reduce((a, w) => a + w.stateWithheld, 0));
+    if (!t.itemized?.stateLocalTax) tie(2, "schA-5a-equals-w2-box17", n0(sa("line5a")), box17, "Schedule A line 5a vs Σ W-2 box 17");
+    tie(2, "schA-5e-salt-cap", n0(sa("line5e")), Math.min(n0(sa("line5d")), r.scheduleA.saltCap), `Schedule A 5e vs min(5d, cap ${money(r.scheduleA.saltCap)})`);
+    tie(2, "schA-4-medical-floor", n0(sa("line4")), Math.max(0, round2(n0(sa("line1")) - round2(r.agi * 0.075))), "Schedule A line 4 vs line 1 − 7.5% AGI");
+    const sum17 = round2(["line4", "line7", "line10", "line14"].reduce((a, x) => a + n0(sa(x)), 0));
+    tie(2, "schA-17-adds-up", n0(sa("line17")), sum17, "Schedule A 17 vs 4 + 7 + 10 + 14");
+    if (t.itemizedDeductionTotal != null) {
+      tie(2, "schA-17-equals-profile-rule", n0(sa("line17")), Math.max(t.itemizedDeductionTotal, r.scheduleA.line5e), "Schedule A 17 vs max(profile total, capped SALT)");
+    }
+  }
+  checks.push({ phase: 2, id: "itemizes-only-when-larger", ok: !r.itemizes || r.deduction > r.standardDeductionAmount,
+    detail: `${r.itemizes ? "itemized" : "standard"} ${money(r.deduction)} (standard ${money(r.standardDeductionAmount)})` });
+  const seRun = docs.f1040se?.[0];
+  if (seRun && r.scheduleE) {
+    const se = keyed(seRun, "f1040se");
+    tie(2, "schE-26-equals-sch1-5", n0(se("line26")), n0(s1("line5")), "Schedule E line 26 vs Schedule 1 line 5");
+    if (t.rentalIncome != null) tie(2, "schE-21-equals-profile-net", round2(["A", "B", "C"].reduce((a, k) => a + n0(se(`line21.${k}`)), 0)), t.rentalIncome, "Σ Schedule E line 21 vs profile rentalIncome");
+    const colBad = ["A", "B", "C"].filter((k) => {
+      const exp = round2(Array.from({ length: 15 }, (_, i) => n0(se(`line${i + 5}.${k}`))).reduce((a, b) => a + b, 0));
+      return !near(n0(se(`line20.${k}`)), exp) || !near(n0(se(`line21.${k}`)), round2(n0(se(`line3.${k}`)) + n0(se(`line4.${k}`)) - n0(se(`line20.${k}`))));
+    });
+    checks.push({ phase: 2, id: "schE-columns-tie-out", ok: !colBad.length, detail: colBad.length ? `column(s) ${colBad.join(", ")}` : undefined });
+    if (docs.f8960?.length) tie(2, "8960-4a-equals-schE-26", n0(m60("line4a")), n0(se("line26")), "Form 8960 line 4a vs Schedule E line 26");
+  }
+
+  // ── Schedule 8812 / Schedule EIC ────────────────────────────────────────────
+  const s8 = keyed(docs.f1040s8?.[0], "f1040s8");
+  if (docs.f1040s8?.length) {
+    tie(2, "sch8812-14-equals-1040-19", n0(s8("line14")), n0(line("line19")), "Schedule 8812 line 14 vs 1040 line 19");
+    tie(2, "sch8812-27-equals-1040-28", n0(s8("line27")), n0(line("line28")), "Schedule 8812 line 27 vs 1040 line 28");
+  }
+  const sei = keyed(docs.f1040sei?.[0], "f1040sei");
+  if (docs.f1040sei?.length) {
+    const kids = scheduleEicChildren(t);
+    const bad = [0, 1, 2].filter((i) => digits(sei(`child${i + 1}.ssn`)) !== digits(kids[i]?.ssn ?? "")).map((i) => `child ${i + 1}`);
+    checks.push({ phase: 2, id: "schEIC-lists-qualifying-children", ok: !bad.length, detail: bad.length ? bad.join(", ") : `${kids.length} child(ren)` });
+  }
+
   // ── Form selection (Phase 3): only include schedules the household needs ──
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ["f1040sa", !t.takesStandardDeduction],
-    ["f1040sd", t.capitalGains != null],
-    ["f1040se", t.rentalIncome != null],
-    ...["f1040s1", "f1040s2", "f1040s3", "f1040sc", "f1040sse", "f8995", "f8959", "f8960", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8959", "f8960", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

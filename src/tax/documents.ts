@@ -7,7 +7,9 @@
  *   f1099div  one per dividend payer (none → no document)
  *   f1040sc   one per business on the return (view.document.scheduleCIndex)
  *   f1040sse  one per person who owes SE tax (view.document.person)
- *   f1040s1 / s2 / s3 / f8995 / f8959 / f8960   one when the return needs it, otherwise none
+ *   f1040s1 / s2 / s3 / sa / sd / se / f8995 / f8959 / f8960   one when the return needs it, otherwise none
+ *   f1099b    one per sale reported on a 1099-B (Form 8949 box A/B/D/E)
+ *   f8949     one per copy needed (one short-term and one long-term box per copy, 11 rows each)
  *   others    one, filled from the household
  *
  * A schedule the return needs but whose year has no field map (the PDF in that
@@ -18,6 +20,8 @@
  */
 import { FakeTaxpayer } from "../faker/taxpayer";
 import { getFieldMap } from "../fieldmaps";
+import { form8949Copies } from "../fieldmaps/capital";
+import { reportedSales } from "../fieldmaps/f1099b";
 import { computeReturn } from "./compute";
 import { includedW2s } from "./household";
 
@@ -38,6 +42,10 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 export function neededSchedules(t: FakeTaxpayer): string[] {
   const r = computeReturn(t);
   const out: string[] = [];
+  if (r.itemizes && r.scheduleA) out.push("f1040sa");
+  if (r.scheduleE) out.push("f1040se");
+  if (r.capital.scheduleD) out.push("f1040sd");
+  if (r.capital.rows.some((x) => !x.directToScheduleD)) out.push("f8949");
   if (r.schedule1.required) out.push("f1040s1");
   if (r.schedule2.required) out.push("f1040s2");
   if (r.schedule3.required) out.push("f1040s3");
@@ -68,6 +76,31 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f1040s2": return single(formId, t, "Schedule 2");
     case "f1040s3": return single(formId, t, "Schedule 3");
     case "f8995":   return single(formId, t, "Form 8995");
+    case "f1040sd": return single(formId, t, "Schedule D");
+    case "f1040sa": return single(formId, t, "Schedule A");
+    case "f1040se": return single(formId, t, "Schedule E");
+    case "f1099b": {
+      if (!getFieldMap("f1099b", t.taxYear)) return [];
+      const sales = reportedSales(t);
+      return sales.map((r, i) => ({
+        index: i + 1,
+        count: sales.length,
+        label: `1099-B #${i + 1} (${r.sale.brokerName}, box ${r.box})`,
+        view: { ...t, document: { source: t, saleIndex: i } },
+      }));
+    }
+    case "f1040s8": return single(formId, t, "Schedule 8812");
+    case "f1040sei": return single(formId, t, "Schedule EIC");
+    case "f8949": {
+      if (!neededSchedules(t).includes("f8949") || !getFieldMap("f8949", t.taxYear)) return [];
+      const copies = form8949Copies(t);
+      return copies.map((c, i) => ({
+        index: i + 1,
+        count: copies.length,
+        label: `Form 8949 #${i + 1} (${[c.short?.box, c.long?.box].filter(Boolean).join("/")})`,
+        view: { ...t, document: { source: t, form8949Copy: i } },
+      }));
+    }
     case "f8959":   return single(formId, t, "Form 8959");
     case "f8960":   return single(formId, t, "Form 8960");
     case "f1040sc": {

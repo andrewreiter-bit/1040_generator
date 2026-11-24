@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { Dependent, FakeTaxpayer, FilingStatus, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, FakeTaxpayer, FilingStatus, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { saversCreditAgiLimit } from "../config/tax-year";
 import { isQualifyingChild } from "../tax/household";
@@ -111,6 +111,10 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS8959", element: "AddnlMedicareTaxWithholdingAmt", label: "8959 24", pick: (r) => [r.form8959.additionalWithheld] },
   { form: "IRS1040Schedule3", element: "ExcessSocSecAndTier1RRTATaxAmt", label: "Sch 3 11", pick: (r) => [r.schedule3.excessSocialSecurity] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
+  { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
+  { form: "IRS1040ScheduleD", element: "NetLTCapitalGainOrLossAmt", label: "Sch D 15", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line15] : []) },
+  { form: "IRS1040ScheduleD", element: "NetSTAndLTCapitalGainOrLossAmt", label: "Sch D 16", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line16] : []) },
+  { form: "IRS1040", element: "TaxableInterestAmt", label: "1040 2b", pick: (r) => [r.taxableInterest] },
   { form: "IRS1040Schedule8812", element: "CTCODCAfterAGILimitAmt", label: "8812 12", pick: (r) => (r.schedule8812.required ? [r.schedule8812.afterPhaseout] : []) },
   { form: "IRS1040Schedule8812", element: "ACTCBeforeLimitAmt", label: "8812 16a", pick: (r) => (r.schedule8812.required ? [r.schedule8812.partII.line16a] : []) },
   { form: "IRS1040Schedule8812", element: "NetEarnedIncomeCalculatedAmt", label: "8812 20", pick: (r) => (r.schedule8812.required ? [r.schedule8812.partII.line20] : []) },
@@ -166,6 +170,10 @@ const SUPPORTED_PATHS: RegExp[] = [
   // Standard-mileage vehicles: only miles, parking and tolls (see VEHICLE_COST_PATHS).
   /^irs1040_schedulec\[\]\.vehicle_info_group\[\]\.(vehicle_(standard_mileage|service_date|business_miles|commuting_miles|other_miles|off_duty|another_avail|evidence_support|evidence_written)|car_truck_expense_(parking|tolls))$/,
   /^irs8995a_schedulec\.prior_yr_qbi_loss_carryforward$/,
+  // Form 8949 / Schedule D.
+  /^irs8949\.irs1099_b_grp\[\]\.(payer_name|who_applies_to)$/,
+  /^irs8949\.irs1099_b_grp\[\]\.irs1099_b\[\]\.(acquired_dt|sold_disposed_dt|desc_of_prop|proceeds|cost_basis|input_irs8949_code|input_irs8949_code_summary|input_sale_term|reporting_method_input|wash_sale_loss|accrued_market_discount|payer_ein|fed_inc_tax_wh)$/,
+  /^irs1040_schedule_d\.(st|lt)_capital_loss_carryover_input$/,
   // Schedule 1: unemployment (1099-G), educator expenses, student loan interest.
   /^irs1040_schedule1\.irs1099_g\[\]\.(g_payer_\w+|g_who_applies_to|g_unemployment_comp|g_fed_wh|g_amount_repaid_current_year)$/,
   /^irs1040_schedule1\.irs1099_g\[\]\.irs1099_g_state\[\]\.\w+$/,
@@ -384,6 +392,36 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   }));
   const educator = val(schedule1, "qualified_educator") === true;
 
+  const REPORTING: Record<string, CapitalAssetSale["reporting"]> = {
+    basis_reported: "basisReported", basis_not_reported: "basisNotReported", not_received: "noForm1099B",
+  };
+  const capitalSales: CapitalAssetSale[] = list(rd.irs8949, "irs1099_b_grp").flatMap((g) =>
+    list(g, "irs1099_b").map((b): CapitalAssetSale => {
+      const summary = val(b, "reporting_method_input") === "summary_transaction";
+      const code = String(val(b, summary ? "input_irs8949_code_summary" : "input_irs8949_code") ?? "");
+      if (!REPORTING[code]) outOfScope.add(`Form 8949 code "${code}"`);
+      return {
+        owner: val(g, "who_applies_to") === "spouse" ? "spouse" : "primary",
+        brokerName: String(val(g, "payer_name") ?? ""),
+        brokerTin: String(val(b, "payer_ein") ?? ""),
+        description: String(val(b, "desc_of_prop") ?? (summary ? "Summary" : "")),
+        dateAcquired: summary ? "VARIOUS" : isoToUs(val(b, "acquired_dt")),
+        dateSold: summary ? `12/31/${taxYear}` : isoToUs(val(b, "sold_disposed_dt")),
+        proceeds: num(val(b, "proceeds")),
+        costBasis: num(val(b, "cost_basis")),   // a missing basis is $0
+        term: val(b, "input_sale_term") === "long_term" ? "long" : "short",
+        reporting: REPORTING[code] ?? "noForm1099B",
+        washSaleDisallowed: num(val(b, "wash_sale_loss")),
+        accruedMarketDiscount: num(val(b, "accrued_market_discount")),
+        federalWithheld: num(val(b, "fed_inc_tax_wh")),
+      };
+    }));
+  const schD = rd.irs1040_schedule_d;
+  const capitalLossCarryover = {
+    shortTerm: num(val(schD, "st_capital_loss_carryover_input")),
+    longTerm: num(val(schD, "lt_capital_loss_carryover_input")),
+  };
+
   const scheduleC1099Withholding = list(rd, "irs1040_schedulec").reduce((s: number, c) =>
     s + list(c, "irs1099_nec").reduce((a: number, x) => a + num(val(x, "nec_fed_wh")), 0)
       + list(c, "irs1099_k").reduce((a: number, x) => a + num(val(x, "k_fed_wh")), 0)
@@ -460,6 +498,8 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     priorYearQbiLoss: num(val(rd.irs8995a_schedulec, "prior_yr_qbi_loss_carryforward")),
     otherForm1099Withholding: scheduleC1099Withholding,
     unemployment1099Gs,
+    capitalSales,
+    capitalLossCarryover,
     educatorExpenses: educator
       ? { primary: num(val(schedule1, "tp_educator_exp_amount")), spouse: num(val(schedule1, "sp_educator_exp_amount")) }
       : undefined,

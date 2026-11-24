@@ -116,6 +116,64 @@ export interface ScheduleCBusiness {
   healthInsurancePremiums?: number;
 }
 
+/**
+ * One sale of a capital asset: a Form 1099-B transaction and a Form 8949 row.
+ * Dates are MM/DD/YYYY; `dateAcquired` may be "VARIOUS" (then `term` decides).
+ */
+export interface CapitalAssetSale {
+  /** Omitted = primary taxpayer. A spouse's sale appears only on MFJ returns. */
+  owner?: "primary" | "spouse";
+  brokerName: string;
+  brokerTin: string;
+  description: string;
+  dateAcquired: string;
+  dateSold: string;
+  proceeds: number;
+  costBasis: number;
+  /** Used only when the dates can't decide (VARIOUS / missing date). */
+  term?: "short" | "long";
+  /** 1099-B box 12 / Form 8949 box: basis reported to IRS (A/D), not reported (B/E), no 1099-B (C/F). */
+  reporting: "basisReported" | "basisNotReported" | "noForm1099B";
+  /** 1099-B box 1g: wash sale loss disallowed (added back, code W). */
+  washSaleDisallowed?: number;
+  /** 1099-B box 1f: accrued market discount (ordinary income up to the gain, code D). */
+  accruedMarketDiscount?: number;
+  /** 1099-B box 4. */
+  federalWithheld?: number;
+}
+
+/** Schedule A inputs (amounts paid, before any limit). */
+export interface ItemizedDeductions {
+  medicalExpenses?: number;          // 1 (before the 7.5%-of-AGI floor)
+  /** 5a. Omitted = state/local income tax withheld on the return's W-2s (box 17). */
+  stateLocalTax?: { kind: "income" | "sales"; amount: number };
+  realEstateTax?: number;            // 5b
+  personalPropertyTax?: number;      // 5c
+  mortgageInterest1098?: number;     // 8a (home acquisition debt assumed within the limit)
+  mortgagePoints?: number;           // 8c
+  charityCash?: number;              // 11
+  /** 12. Kept at $500 or less (no Form 8283). */
+  charityNonCash?: number;
+}
+
+/** One rental real estate property (Schedule E Part I column). */
+export interface RentalProperty {
+  address: string;                   // 1a, street, city, state and ZIP
+  /** 1b property type code: 1 single family, 2 multi-family, 3 vacation/short-term, 4 commercial … */
+  propertyType: number;
+  fairRentalDays: number;            // 2
+  personalUseDays: number;
+  qualifiedJointVenture: boolean;
+  rents: number;                     // 3
+  royalties: number;                 // 4
+  expenses: {
+    advertising?: number; autoTravel?: number; cleaningMaintenance?: number; commissions?: number;
+    insurance?: number; legalProfessional?: number; managementFees?: number; mortgageInterest?: number;
+    otherInterest?: number; repairs?: number; supplies?: number; taxes?: number; utilities?: number;
+    depreciation?: number; other?: number;
+  };
+}
+
 /** Form 1099-G box 1 unemployment compensation (Schedule 1 line 7). */
 export interface Unemployment1099G {
   /** Omitted = primary taxpayer. A spouse's 1099-G appears only on MFJ returns. */
@@ -140,6 +198,10 @@ export interface DocumentContext {
   scheduleCIndex?: number;
   /** Whose Schedule SE this is. */
   person?: "primary" | "spouse";
+  /** Which Form 8949 copy (see form8949Copies). */
+  form8949Copy?: number;
+  /** Which reported sale a Form 1099-B is for (see reportedSales). */
+  saleIndex?: number;
 }
 
 export interface FakeTaxpayer {
@@ -192,10 +254,19 @@ export interface FakeTaxpayer {
   businessIncome: number | null;
   scheduleCs?: ScheduleCBusiness[];
   rentalIncome: number | null;
+  /** Net capital gain/loss as a bare figure (legacy); ignored when `capitalSales` is present. */
   capitalGains: number | null;
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Schedule A detail. When present, `itemizedDeductionTotal` is ignored. */
+  itemized?: ItemizedDeductions;
+  /** Schedule E Part I rentals. When present, `rentalIncome` is ignored. */
+  rentals?: RentalProperty[];
+  /** Capital asset sales (Form 8949 / Schedule D). When present, `capitalGains` is ignored. */
+  capitalSales?: CapitalAssetSale[];
+  /** Capital loss carryover from the prior year, as positive amounts (Schedule D lines 6 and 14). */
+  capitalLossCarryover?: { shortTerm: number; longTerm: number };
   /** Unreimbursed K–12 educator expenses (Schedule 1 line 11), per person, before the per-person cap. */
   educatorExpenses?: { primary?: number; spouse?: number };
   /** Student loan interest paid (Schedule 1 line 21 worksheet input). */

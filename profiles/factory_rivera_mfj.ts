@@ -9,6 +9,8 @@ import {
 } from "./taxpayer";
 import { ssWageBase } from "./tax-year";
 import { buildScheduleC } from "./schedule-c";
+import { buildCapitalSales } from "./capital";
+import { buildItemized, buildRental } from "./schedules-ae";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -219,6 +221,17 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   // existing draw so a given seed still produces the same household.
   if (taxpayer.businessIncome != null) {
     taxpayer.scheduleCs = [buildScheduleC(faker, taxpayer.businessIncome, taxYear)];
+  }
+  // Brokerage sales behind the drawn net capital gain (also after every existing draw).
+  if (taxpayer.capitalGains != null) {
+    taxpayer.capitalSales = buildCapitalSales(faker, taxpayer.capitalGains, taxYear);
+  }
+  // Schedule A and Schedule E detail behind the drawn totals (also after every existing draw).
+  if (!taxpayer.takesStandardDeduction && taxpayer.itemizedDeductionTotal != null) {
+    taxpayer.itemized = buildItemized(faker, taxpayer, taxpayer.itemizedDeductionTotal);
+  }
+  if (taxpayer.rentalIncome != null) {
+    taxpayer.rentals = [buildRental(faker, taxpayer.rentalIncome)];
   }
   return taxpayer;
 }

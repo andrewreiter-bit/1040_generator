@@ -9,6 +9,7 @@
  */
 import { FakeTaxpayer } from "../faker/taxpayer";
 import { namesOnReturn } from "../tax/household";
+import { computeReturn } from "../tax/compute";
 import { BLANK, CHECK, FieldMap, FieldValue, MappedField, OFF, money } from "./types";
 
 const P1 = "topmostSubform[0].Page1[0].";
@@ -29,8 +30,19 @@ function dividendRow(r: number): [string, string] {
   return [f(36 + (r - 1) * 2), f(37 + (r - 1) * 2)];
 }
 
+/** Part I rows: each 1099-INT payer, then accrued market discount recognized on sales (by broker). */
+export function scheduleBInterestRows(t: FakeTaxpayer): Array<{ payer: string; amount: number }> {
+  const rows = t.interest1099s.map((p) => ({ payer: p.payerName, amount: p.interestIncome }));
+  const byBroker = new Map<string, number>();
+  for (const r of computeReturn(t).capital.rows) {
+    if (r.marketDiscount) byBroker.set(r.sale.brokerName, (byBroker.get(r.sale.brokerName) ?? 0) + r.marketDiscount);
+  }
+  for (const [broker, amount] of byBroker) rows.push({ payer: `${broker} (accrued market discount)`, amount });
+  return rows;
+}
+
 export const scheduleBInterestTotal = (t: FakeTaxpayer) =>
-  Math.round(t.interest1099s.reduce((s, p) => s + p.interestIncome, 0) * 100) / 100;
+  Math.round(scheduleBInterestRows(t).reduce((s, p) => s + p.amount, 0) * 100) / 100;
 export const scheduleBDividendTotal = (t: FakeTaxpayer) =>
   Math.round(t.dividend1099s.reduce((s, p) => s + p.ordinaryDividends, 0) * 100) / 100;
 
@@ -43,8 +55,8 @@ function buildMap(taxYear: number): FieldMap {
 
   for (let r = 0; r < INTEREST_ROWS; r++) {
     const [name, amount] = interestRow(r);
-    add(name, `int${r + 1}.payer`, (t) => t.interest1099s[r]?.payerName ?? BLANK, true);
-    add(amount, `int${r + 1}.amount`, (t) => money(t.interest1099s[r]?.interestIncome));
+    add(name, `int${r + 1}.payer`, (t) => scheduleBInterestRows(t)[r]?.payer ?? BLANK, true);
+    add(amount, `int${r + 1}.amount`, (t) => money(scheduleBInterestRows(t)[r]?.amount));
   }
   add(f(31), "line2", (t) => money(scheduleBInterestTotal(t)));
   add(f(32), "line3", () => BLANK);   // excludable savings bond interest (Form 8815): none

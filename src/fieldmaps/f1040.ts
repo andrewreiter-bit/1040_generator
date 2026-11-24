@@ -58,7 +58,7 @@ export function deductionAmount(t: FakeTaxpayer): number {
 const r = computeReturn;
 const hasRefund = (t: FakeTaxpayer) => r(t).refund > 0;
 const moneyOrBlank = (n: number) => (n === 0 ? BLANK : money(n));
-const hasCapitalActivity = (t: FakeTaxpayer) => t.capitalGains != null || r(t).capitalGainDistributions !== 0;
+const hasCapitalActivity = (t: FakeTaxpayer) => r(t).scheduleDRequired || t.capitalGains != null || r(t).capitalGainDistributions !== 0;
 
 const TEXT_VALUES: Record<string, FieldValue> = {
   firstName:        (t) => `${t.firstName} ${t.middleInitial}`.trim(),
@@ -114,7 +114,7 @@ const CHECKBOX_VALUES: Record<string, FieldValue> = {
   checking:         (t) => checkIf(hasRefund(t) && t.accountType === "Checking"),
   savings:          (t) => checkIf(hasRefund(t) && t.accountType === "Savings"),
   // Only capital gain distributions (1099-DIV box 2a) → Schedule D not required.
-  scheduleDNotRequired: (t) => checkIf(!r(t).scheduleDRequired && r(t).capitalGainDistributions > 0),
+  scheduleDNotRequired: (t) => checkIf(r(t).capital.distributionsOnly),
   youBornBefore:    (t) => checkIf(r(t).youAre65),
   spouseBornBefore: (t) => checkIf(r(t).spouseIs65),
   designeeYes:      () => OFF,

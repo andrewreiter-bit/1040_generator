@@ -14,7 +14,6 @@
  */
 import { FakeTaxpayer } from "../faker/taxpayer";
 import {
-  CAPITAL_LOSS_LIMIT,
   CREDIT_FOR_OTHER_DEPENDENTS,
   CTC_PHASEOUT_THRESHOLD,
   EDUCATOR_EXPENSE_LIMIT,
@@ -33,9 +32,13 @@ import {
 } from "./business";
 import { Form8959Lines, Form8960Lines, excessSocialSecurity, form8959, form8960 } from "./payroll";
 import { Rounder, rounderFor, sumWith } from "./rounding";
+import { CapitalResult, computeCapital } from "./capital";
+import { ScheduleALines, scheduleA } from "./itemized";
+import { ScheduleELines, scheduleE } from "./rental";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
+  rentalIncome: number;        // 5 (Schedule E line 26)
   unemployment: number;        // 7
   unemploymentRepaid: number;  // repayment shown beside line 7
   additionalIncome: number;    // 10 → 1040 line 8
@@ -68,7 +71,15 @@ export interface ReturnLines {
   ordinaryDividends: number;   // 3b
   capitalGainDistributions: number;
   capitalGain: number;         // 7 / 7a (after the loss limit)
+  /** § 1(h) net capital gain: smaller of Schedule D lines 15 and 16 (or the distributions alone). */
+  netCapitalGain: number;
   scheduleDRequired: boolean;
+  capital: CapitalResult;
+  /** Line 12: standard deduction (with the 65+ add-on) or Schedule A, whichever is larger. */
+  standardDeductionAmount: number;
+  itemizes: boolean;
+  scheduleA?: ScheduleALines;
+  scheduleE?: ScheduleELines;
   additionalIncome: number;    // 8 (Schedule 1 line 10)
   totalIncome: number;         // 9
   adjustments: number;         // 10
@@ -161,19 +172,26 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   // ── Income ────────────────────────────────────────────────────────────────
   const wages = sum(w2s.map((w) => w.wages));
-  const taxableInterest = round2(t.totalInterest);
+  const capitalGainDistributions = sum(t.dividend1099s.map((d) => d.totalCapitalGain));
+  const capital = computeCapital(t, capitalGainDistributions, R);
+  // Recognized accrued market discount on sales is interest income (§ 1276).
+  const taxableInterest = round2(t.totalInterest + capital.marketDiscountInterest);
   const ordinaryDividends = round2(t.totalDividends);
   const qualifiedDividends = round2(t.totalQualifiedDividends);
-  const capitalGainDistributions = sum(t.dividend1099s.map((d) => d.totalCapitalGain));
 
-  const netCapital = round2((t.capitalGains ?? 0) + capitalGainDistributions);
-  const lossLimit = t.filingStatus === "MFS" ? CAPITAL_LOSS_LIMIT.mfs : CAPITAL_LOSS_LIMIT.other;
-  const capitalGain = netCapital >= 0 ? netCapital : Math.max(netCapital, -lossLimit);
-  const scheduleDRequired = t.capitalGains != null;
-  if (scheduleDRequired) unsupported.push("Schedule D / Form 8949 detail (net capital gain is on line 7, but the Schedule D form is not filled)");
+  const capitalGain = capital.capitalGain;
+  const netCapitalGain = capital.netCapitalGain;
+  const scheduleDRequired = !!capital.scheduleD;
+  if (t.capitalGains != null && !t.capitalSales?.length) {
+    unsupported.push("capital gain given only as a net figure (no Form 8949 / Schedule D detail)");
+  }
 
   if (t.businessIncome != null && !t.scheduleCs?.length) unsupported.push("Schedule C business income given only as a net figure (no Schedule C detail)");
-  if (t.rentalIncome != null) unsupported.push("Schedule E rental income (Schedule 1 line 5)");
+  if (t.rentalIncome != null && !t.rentals?.length) unsupported.push("rental income given only as a net figure (no Schedule E detail)");
+  const schE = t.rentals?.length ? scheduleE(t.rentals, R) : undefined;
+  if (schE?.columns.some((c) => c.net < 0)) unsupported.push("rental loss (passive activity limits, Form 8582)");
+  if ((schE?.columns.length ?? 0) > 3) unsupported.push("more than three rental properties (Schedule E continuation page)");
+  const rentalIncome = schE?.line26 ?? 0;
   if (t.socialSecurityBenefits != null) unsupported.push("taxable Social Security benefits (line 6b worksheet)");
 
   // ── Schedule C / SE ───────────────────────────────────────────────────────
@@ -188,7 +206,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const g1099s = (t.unemployment1099Gs ?? []).filter((g) => g.recipient !== "spouse" || joint);
   const unemploymentRepaid = sum(g1099s.map((g) => g.repaidThisYear));
   const unemployment = round2(sum(g1099s.map((g) => g.compensation)) - unemploymentRepaid);
-  const additionalIncome = round2(businessIncome + unemployment);
+  const additionalIncome = round2(businessIncome + rentalIncome + unemployment);
   const educatorExpenses = sum([
     Math.min(t.educatorExpenses?.primary ?? 0, EDUCATOR_EXPENSE_LIMIT),
     joint ? Math.min(t.educatorExpenses?.spouse ?? 0, EDUCATOR_EXPENSE_LIMIT) : 0,
@@ -209,9 +227,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   }
   const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, studentLoanInterest]);
   const schedule1: Schedule1Lines = {
-    businessIncome, unemployment, unemploymentRepaid, additionalIncome, educatorExpenses, seTaxDeduction,
+    businessIncome, rentalIncome, unemployment, unemploymentRepaid, additionalIncome, educatorExpenses, seTaxDeduction,
     healthInsurance, studentLoanInterest, adjustments,
-    required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0,
+    required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0 || !!schE,
   };
 
   const agi = round2(totalIncome - adjustments);
@@ -219,20 +237,25 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // ── Deductions ────────────────────────────────────────────────────────────
   const youAre65 = is65OrOlder(t.dateOfBirth, t.taxYear);
   const spouseIs65 = t.filingStatus === "MFJ" && is65OrOlder(t.spouseDateOfBirth, t.taxYear);
-  let deduction: number;
-  if (t.takesStandardDeduction || t.itemizedDeductionTotal == null) {
-    const boxes = (youAre65 ? 1 : 0) + (spouseIs65 ? 1 : 0);
-    deduction = standardDeduction(t.taxYear, t.filingStatus) + boxes * additionalStandardDeduction(t.taxYear, t.filingStatus);
-  } else {
-    deduction = round2(t.itemizedDeductionTotal);
-    unsupported.push("Schedule A itemized deduction detail (line 12 uses the profile total; Schedule A form is not filled)");
+  // Line 12: the larger of the standard deduction and Schedule A. (Assumes an MFS spouse
+  // doesn't itemize, which would force itemizing here; the model can't see that return.)
+  const boxes = (youAre65 ? 1 : 0) + (spouseIs65 ? 1 : 0);
+  const standardDeductionAmount = standardDeduction(t.taxYear, t.filingStatus) + boxes * additionalStandardDeduction(t.taxYear, t.filingStatus);
+  const schA = t.itemized ? scheduleA(t, agi, R) : undefined;
+  const legacyItemized = !t.itemized && !t.takesStandardDeduction && t.itemizedDeductionTotal != null ? round2(t.itemizedDeductionTotal) : undefined;
+  const itemizedAmount = schA?.line17 ?? legacyItemized ?? 0;
+  const itemizes = itemizedAmount > standardDeductionAmount;
+  const deduction = itemizes ? itemizedAmount : standardDeductionAmount;
+  if (itemizes && legacyItemized != null) unsupported.push("itemized deductions given only as a total (no Schedule A detail)");
+  if (itemizes && schA && (schA.line11 > agi * 0.6 || schA.line12 > agi * 0.3)) {
+    unsupported.push("charitable contributions over the AGI limits (§ 170(b))");
   }
   if (t.taxYear >= 2025 && (youAre65 || spouseIs65)) {
     unsupported.push("2025 Schedule 1-A senior deduction (line 13b)");
   }
   let qbi: Form8995Lines | undefined;
   if (scheduleCs.length || t.priorYearQbiLoss) {
-    qbi = form8995(bizDed.qbiByBusiness, Math.max(0, round2(agi - deduction)), round2(qualifiedDividends + Math.max(0, capitalGain)), t, R);
+    qbi = form8995(bizDed.qbiByBusiness, Math.max(0, round2(agi - deduction)), round2(qualifiedDividends + netCapitalGain), t, R);
     if (qbi.overThreshold && qbi.netQbi > 0) unsupported.push("QBI deduction above the § 199A threshold (Form 8995-A)");
   }
   const qbiDeduction = qbi && !qbi.overThreshold ? qbi.deduction : 0;
@@ -240,8 +263,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const taxableIncome = Math.max(0, round2(agi - totalDeductions));
 
   // ── Tax ───────────────────────────────────────────────────────────────────
-  const tax = qualifiedDividends > 0 || capitalGain > 0
-    ? qdcgTax(taxableIncome, qualifiedDividends, capitalGain, t, R)
+  const tax = qualifiedDividends > 0 || netCapitalGain > 0
+    ? qdcgTax(taxableIncome, qualifiedDividends, netCapitalGain, t, R)
     : R(taxOnIncome(taxableIncome, t.taxYear, t.filingStatus));
   const scheduleTwoPartOne = 0; // AMT / excess APTC not modelled
   const taxBeforeCredits = round2(tax + scheduleTwoPartOne);
@@ -260,7 +283,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   // ── Schedule 2 Part II ────────────────────────────────────────────────────
   const f8959 = form8959(t.filingStatus, w2s, scheduleSEs, R);
-  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R);
+  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome);
   const seTax = sum(scheduleSEs.map((s) => s.seTax));
   const otherTaxes = round2(seTax + f8959.totalTax + f8960.tax);
   const schedule2: Schedule2Lines = {
@@ -275,6 +298,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     ...t.interest1099s.map((p) => p.federalWithheld ?? 0),
     ...t.dividend1099s.map((p) => p.federalWithheld ?? 0),
     t.otherForm1099Withholding ?? 0,
+    capital.federalWithheld,
     ...g1099s.map((g) => g.federalWithheld),
   ]);
   const otherWithholding = f8959.additionalWithheld;
@@ -290,7 +314,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const seEarned = sum(scheduleSEs.map((s) => s.combined - s.deduction));
   const earnedIncome = round2(wages + seEarned);
   const nEic = eicChildren(t).length;
-  const investmentIncome = round2(taxableInterest + ordinaryDividends + Math.max(0, capitalGain));
+  // Pub 596 Worksheet 1: interest, dividends, capital gain net income and net passive (rental) income.
+  const investmentIncome = round2(taxableInterest + ordinaryDividends + Math.max(0, capitalGain) + Math.max(0, rentalIncome));
   let eic = earnedIncomeCredit(t, nEic, earnedIncome, agi, investmentIncome);
   if (t.filingStatus === "MFS" && nEic > 0) {
     // A separate return gets EIC only under the separated-spouse rule (§ 32(d)(2)), which the
@@ -318,7 +343,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   const result: ReturnLines = {
     wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
-    capitalGain, scheduleDRequired, additionalIncome, totalIncome, adjustments, agi,
+    capitalGain, netCapitalGain, scheduleDRequired, capital, standardDeductionAmount, itemizes,
+    scheduleA: itemizes ? schA : undefined, scheduleE: schE, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, deduction, qbiDeduction, totalDeductions, taxableIncome,
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, totalCredits, taxAfterCredits, otherTaxes, totalTax,

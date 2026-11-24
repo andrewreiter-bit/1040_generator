@@ -4,11 +4,15 @@ import { FW4_MAPS } from "./fw4";
 import { F1040SB_MAPS } from "./f1040sb";
 import { SCHEDULE_C_MAPS, SCHEDULE_SE_MAPS } from "./business";
 import { SCHEDULE_1_2_3_MAPS } from "./schedules-1-2-3";
+import { CAPITAL_MAPS } from "./capital";
+import { CREDIT_MAPS } from "./credits";
+import { F1099B_MAPS } from "./f1099b";
+import { SCHEDULE_A_E_MAPS } from "./schedules-ae";
 
 export * from "./types";
 
 const ALL_MAPS: FieldMap[] = [
-  ...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS, ...SCHEDULE_C_MAPS, ...SCHEDULE_SE_MAPS, ...SCHEDULE_1_2_3_MAPS,
+  ...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS, ...SCHEDULE_C_MAPS, ...SCHEDULE_SE_MAPS, ...SCHEDULE_1_2_3_MAPS, ...CAPITAL_MAPS, ...CREDIT_MAPS, ...F1099B_MAPS, ...SCHEDULE_A_E_MAPS,
 ];
 
 export function getFieldMap(formId: string, taxYear: number): FieldMap | undefined {

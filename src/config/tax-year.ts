@@ -153,6 +153,21 @@ export const EIC_PHASEOUT_RATE = [0.0765, 0.1598, 0.2106, 0.2106];
 /** Schedule 8812 line 19/20: 15% of earned income over $2,500 (§ 24(d)(1)(B)). */
 export const ACTC_EARNED_INCOME_FLOOR = 2500;
 export const ACTC_EARNED_INCOME_RATE = 0.15;
+/** Schedule A line 3: medical expenses deductible above 7.5% of AGI (§ 213(a)). */
+export const MEDICAL_AGI_FLOOR = 0.075;
+
+/**
+ * Schedule A line 5e SALT cap (§ 164(b)(6)). 2023–2024: $10,000. 2025 (OBBBA,
+ * 2025 Schedule A instructions' worksheet): $40,000 less 30% of modified AGI over
+ * $500,000, not below $10,000. Married filing separately: half of each amount.
+ */
+export function saltCap(taxYear: number, status: FilingStatus, modifiedAgi: number): number {
+  const half = status === "MFS" ? 0.5 : 1;
+  if (taxYear < 2025) return 10000 * half;
+  const over = Math.max(0, modifiedAgi - 500000 * half);
+  return Math.max(40000 * half - 0.3 * over, 10000 * half);
+}
+
 export const EDUCATOR_EXPENSE_LIMIT = 300;
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
 /** § 199A deduction rate. */
