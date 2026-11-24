@@ -38,11 +38,13 @@ const SEPARATED_ID = /^[\d\s()\-]+$/;
  * @param template  The parsed form template (field definitions)
  * @param taxpayer  The fake taxpayer whose data populates the fields
  * @param runId     Optional suffix for output filename (e.g. run index for batch mode)
+ * @param docSuffix Optional suffix when a household has several documents of this form (e.g. "doc2")
  */
 export async function fillForm(
   template: FormTemplate,
   taxpayer: FakeTaxpayer,
-  runId?: string | number
+  runId?: string | number,
+  docSuffix?: string
 ): Promise<FillResult> {
   const OUTPUT_DIR = outputDir();
   await fs.ensureDir(OUTPUT_DIR);
@@ -202,7 +204,7 @@ export async function fillForm(
   // Flatten to lock in values
   form.flatten();
 
-  const suffix      = runId !== undefined ? `_${runId}` : "";
+  const suffix      = (runId !== undefined ? `_${runId}` : "") + (docSuffix ? `_${docSuffix}` : "");
   const outFileName = `${template.formId}_seed${taxpayer.seed}${suffix}.pdf`;
   const outPath     = path.join(OUTPUT_DIR, outFileName);
   await fs.writeFile(outPath, await pdfDoc.save());

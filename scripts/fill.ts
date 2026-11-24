@@ -48,6 +48,10 @@ const opts = program.opts();
 
   console.log(chalk.bold("\nSummary:"));
   console.log(chalk.green(`  ✓ ${result.totalSucceeded} PDFs filled`));
+  if (result.noDocuments.length > 0) {
+    const ids = [...new Set(result.noDocuments.map((n) => n.formId))].join(", ");
+    console.log(chalk.gray(`  – no document needed for: ${ids} (household has no matching records)`));
+  }
   if (result.totalFailed > 0) {
     console.log(chalk.red(`  ✗ ${result.totalFailed} failed`));
     result.errors.forEach((e) =>
@@ -59,7 +63,7 @@ const opts = program.opts();
   if (opts.merge && result.results.length > 0) {
     // Sort by form ID then submission index for a predictable page order
     const sorted = [...result.results].sort((a, b) =>
-      a.formId.localeCompare(b.formId) || a.submission - b.submission
+      a.formId.localeCompare(b.formId) || a.submission - b.submission || a.docIndex - b.docIndex
     );
     const paths = sorted.map((r) => r.outputPath);
     const name  = opts.mergeName ?? undefined;

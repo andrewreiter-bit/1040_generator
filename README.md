@@ -502,6 +502,8 @@ The PDFs are **flattened** — form fields are rendered into the page content so
 
 Fields that don't correspond to taxpayer data (e.g. Form 1040 line 1c tip income, W-2 box 12 codes) are left **blank**, and checkboxes are left unchecked unless a rule sets them, so every amount on a return ties back to the household. Form 1040 uses an explicit per-year field map (`src/fieldmaps/f1040.ts`) for filing status, spouse, dependents, and the income/deduction lines.
 
+Each household gets one W-2 per W-2 record (a spouse's W-2 carries the spouse's name and SSN on joint returns) and one 1099-INT / 1099-DIV per payer; with several documents the files are named `{formId}_seed{seed}_doc{n}.pdf`. A form with no matching records (e.g. no interest payers) produces no 1099-INT. Form 1040 tax, credits, refund, and amount owed come from `src/tax/compute.ts`, which uses the verified 2023–2025 constants in `src/config/tax-year.ts` (brackets, Tax Table rule, qualified dividend/capital gain thresholds, CTC, standard deduction). Income it cannot yet carry to the 1040 (Schedules C/E/SE, Schedule A detail, taxable Social Security, EIC, ACTC) is reported by `npm run validate` as `household-within-supported-scope` rather than dropped silently.
+
 To restore the old behaviour of filling every box with random values (useful for OCR/layout stress tests), set `FILL_UNMAPPED=random`.
 
 ### Consistency checks
@@ -513,6 +515,18 @@ npm run validate
 npm run validate -- --profiles rivera_mfj --years 2025 --keep   # keep the filled PDFs
 npm run validate -- --gate 2 --json report.json
 ```
+
+### External answer key (TaxCalcBench)
+
+`npm run answer-key` scores the federal calculation in `src/tax/compute.ts` against the hand-built TY2024 answer key in [TaxCalcBench](https://github.com/column-tax/tax-calc-bench) (51 federal returns, 19 Form 1040 lines each). The dataset is **not** included in this repo: TaxCalcBench is published for evaluation only and asks that its inputs and outputs never be used for model training or synthetic training-data generation. Keep a separate local clone and never copy its data into generated returns.
+
+```bash
+git clone --depth 1 https://github.com/column-tax/tax-calc-bench.git ../tax-calc-bench
+TAXCALCBENCH_DIR=../tax-calc-bench npm run answer-key
+npm run answer-key -- --bench-dir ../tax-calc-bench --case single-w2 --verbose
+```
+
+A case is scored only when every answer in its input is something the taxpayer model represents; the rest are listed as out of scope with the reason (e.g. Schedule C, 1099-G, EIC the household may qualify for), and the summary ranks those reasons to show what to support next. Cases the TaxCalcBench README lists as known issues are reported separately.
 
 `FORMS_DIR`, `TEMPLATES_DIR`, and `OUTPUT_DIR` env vars override the default `forms/`, `templates/`, and `output/` directories for any command.
 

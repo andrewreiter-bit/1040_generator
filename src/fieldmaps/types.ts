@@ -12,6 +12,8 @@ export interface MappedField {
   key: string;
   /** Omit to keep the default behaviour while still giving the field a key. */
   value?: FieldValue;
+  /** The box holds text (e.g. a payer name) even if the template typed it as an amount. */
+  text?: boolean;
 }
 
 export interface FieldMap {

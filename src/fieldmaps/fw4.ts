@@ -8,6 +8,7 @@
  */
 import { FakeTaxpayer, FilingStatus } from "../faker/taxpayer";
 import { BLANK, FieldMap, FieldValue, MappedField, OFF, checkIf, money } from "./types";
+import { childTaxCreditCount, otherDependentCount } from "../tax/household";
 
 const P1 = "topmostSubform[0].Page1[0].";
 const P3 = "topmostSubform[0].Page3[0].";
@@ -25,11 +26,11 @@ function step3Applies(t: FakeTaxpayer): boolean {
 }
 
 export function w4ChildrenAmount(t: FakeTaxpayer): number {
-  return step3Applies(t) ? t.dependents.filter((d) => d.qualifiesChildTaxCredit).length * 2000 : 0;
+  return step3Applies(t) ? childTaxCreditCount(t) * 2000 : 0;
 }
 
 export function w4OtherDependentsAmount(t: FakeTaxpayer): number {
-  return step3Applies(t) ? t.dependents.filter((d) => d.qualifiesOtherDependent).length * 500 : 0;
+  return step3Applies(t) ? otherDependentCount(t) * 500 : 0;
 }
 
 const amountOrBlank = (n: number) => (n > 0 ? money(n) : BLANK);

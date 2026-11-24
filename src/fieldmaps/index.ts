@@ -1,10 +1,11 @@
 import { FieldMap } from "./types";
 import { F1040_MAPS } from "./f1040";
 import { FW4_MAPS } from "./fw4";
+import { F1040SB_MAPS } from "./f1040sb";
 
 export * from "./types";
 
-const ALL_MAPS: FieldMap[] = [...F1040_MAPS, ...FW4_MAPS];
+const ALL_MAPS: FieldMap[] = [...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS];
 
 export function getFieldMap(formId: string, taxYear: number): FieldMap | undefined {
   return ALL_MAPS.find((m) => m.formId === formId && m.taxYear === taxYear);

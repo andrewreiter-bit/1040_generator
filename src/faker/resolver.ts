@@ -275,6 +275,11 @@ function resolveDollar(label: string, t: FakeTaxpayer, formId: string): string {
     return randomOrBlank();
   }
 
+  if (/federal income tax withheld/.test(label)) {
+    const withheld: Array<{ federalWithheld?: number }> =
+      formId === "f1099div" ? t.dividend1099s : formId === "f1099int" ? t.interest1099s : [];
+    return fmt(sum(withheld, (p) => p.federalWithheld ?? 0) || null);
+  }
   if (/qualified dividend/.test(label))                return fmt(t.totalQualifiedDividends);
   if (/ordinary dividend/.test(label))                 return fmt(t.totalDividends);
   if (/capital gain distr/.test(label))                return fmt(sum(t.dividend1099s, (d) => d.totalCapitalGain) || null);

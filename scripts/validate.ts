@@ -27,6 +27,10 @@ import { fillForm, FillResult } from "../src/filler/index";
 import { getFieldMap, fieldNameForKey, FieldMap } from "../src/fieldmaps";
 import { deductionAmount } from "../src/fieldmaps/f1040";
 import { w4ChildrenAmount, w4OtherDependentsAmount } from "../src/fieldmaps/fw4";
+import { scheduleBDividendTotal, scheduleBInterestTotal } from "../src/fieldmaps/f1040sb";
+import { computeReturn } from "../src/tax/compute";
+import { documentsFor } from "../src/tax/documents";
+import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 
 const COMMON_FORMS = ["f1040", "fw2", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1099int", "f1099div", "fw4"];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -46,7 +50,7 @@ const opts = program.opts();
 
 interface Check { phase: number; id: string; ok: boolean; detail?: string }
 
-interface FormRun { template: FormTemplate; result: FillResult }
+interface FormRun { template: FormTemplate; result: FillResult; label: string; view: FakeTaxpayer }
 
 const digits = (s: string | undefined) => (s ?? "").replace(/\D/g, "");
 const num = (s: string | undefined): number | null => {
@@ -105,9 +109,10 @@ function numericFields(template: FormTemplate): FieldDefinition[] {
 
 // ── Checks ────────────────────────────────────────────────────────────────────
 
-function genericChecks(runs: Record<string, FormRun>): Check[] {
+function genericChecks(allRuns: FormRun[]): Check[] {
   const checks: Check[] = [];
-  const allWarnings = Object.values(runs).flatMap((r) => r.result.warnings.map((w) => `${r.template.formId}: ${w}`));
+  const runs = allRuns;
+  const allWarnings = runs.flatMap((r) => r.result.warnings.map((w) => `${r.label}: ${w}`));
   const list = (ws: string[]) => (ws.length ? ws.slice(0, 4).join(" | ") + (ws.length > 4 ? ` (+${ws.length - 4} more)` : "") : undefined);
 
   const yearW = allWarnings.filter((w) => /is for tax year/.test(w));
@@ -120,15 +125,17 @@ function genericChecks(runs: Record<string, FormRun>): Check[] {
   checks.push({ phase: 1, id: "no-truncated-values", ok: !truncW.length, detail: list(truncW) });
 
   const writeW = allWarnings.filter((w) => /Could not write/.test(w));
-  const skipped = Object.values(runs).reduce((s, r) => s + r.result.skippedCount, 0);
+  const skipped = runs.reduce((s, r) => s + r.result.skippedCount, 0);
   checks.push({ phase: 1, id: "no-write-errors", ok: !writeW.length && skipped === 0, detail: list(writeW) ?? (skipped ? `${skipped} skipped` : undefined) });
 
   const formulaW = allWarnings.filter((w) => /Formula unresolved/.test(w));
   checks.push({ phase: 1, id: "formulas-resolve", ok: !formulaW.length, detail: list(formulaW) });
 
   const textInNumeric: string[] = [];
-  for (const run of Object.values(runs)) {
+  for (const run of runs) {
+    const textFields = getFieldMap(run.template.formId, run.view.taxYear)?.fields ?? {};
     for (const f of numericFields(run.template)) {
+      if (textFields[f.pdfFieldName]?.text) continue;
       const v = run.result.fieldValues[f.pdfFieldName];
       if (v !== undefined && v !== "" && isNaN(num(v) as number)) {
         textInNumeric.push(`${run.template.formId} ${f.lineNumber ?? ""} "${v}"`);
@@ -138,7 +145,7 @@ function genericChecks(runs: Record<string, FormRun>): Check[] {
   checks.push({ phase: 1, id: "numeric-fields-hold-numbers", ok: !textInNumeric.length, detail: list(textInNumeric) });
 
   const negFloor: string[] = [];
-  for (const run of Object.values(runs)) {
+  for (const run of runs) {
     for (const f of run.template.fields) {
       if (!f.formula?.floorAtZero) continue;
       const v = num(run.result.fieldValues[f.pdfFieldName]);
@@ -192,19 +199,23 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
     const name = k(`dep${i + 1}.name`) ?? k(`dep${i + 1}.first`) ?? "";
     if (digits(ssn) !== digits(dep?.ssn)) depProblems.push(`dep${i + 1} ssn "${ssn}"`);
     if (dep ? !name.includes(dep.firstName) : name !== "") depProblems.push(`dep${i + 1} name "${name}"`);
-    if ((k(`dep${i + 1}.ctc`) === "Yes") !== !!dep?.qualifiesChildTaxCredit) depProblems.push(`dep${i + 1} CTC box`);
+    if ((k(`dep${i + 1}.ctc`) === "Yes") !== (!!dep && qualifiesForChildTaxCredit(dep, t.taxYear))) depProblems.push(`dep${i + 1} CTC box`);
     if ((k(`dep${i + 1}.relationship`) ?? "") !== (dep?.relationship ?? "")) depProblems.push(`dep${i + 1} relationship`);
   }
   checks.push({ phase: 1, id: "1040-dependents", ok: !depProblems.length, detail: depProblems.join("; ") || `${t.dependents.length} dependent(s)` });
 
-  // Mutually exclusive pairs
-  const pairs: Array<[string, string]> = [["digitalAssetsYes", "digitalAssetsNo"], ["checking", "savings"], ["designeeYes", "designeeNo"]];
-  const badPairs = pairs.filter(([a, b]) => (k(a) === "Yes") === (k(b) === "Yes")).map(([a, b]) => `${a}/${b}`);
+  // Yes/No questions need exactly one answer; checking/savings at most one (none without a refund)
+  const exactlyOne: Array<[string, string]> = [["digitalAssetsYes", "digitalAssetsNo"], ["designeeYes", "designeeNo"]];
+  const badPairs = [
+    ...exactlyOne.filter(([a, b]) => (k(a) === "Yes") === (k(b) === "Yes")).map(([a, b]) => `${a}/${b}`),
+    ...(k("checking") === "Yes" && k("savings") === "Yes" ? ["checking/savings"] : []),
+  ];
   checks.push({ phase: 1, id: "1040-exclusive-checkboxes", ok: !badPairs.length, detail: badPairs.join(", ") || undefined });
 
   // Income and deduction lines tie to the household
-  const fedWithheld = t.w2Records.reduce((s, w) => s + w.federalWithheld, 0);
-  eq(1, "1040-1a-wages", k("line1a"), t.totalWages);
+  const w2s = includedW2s(t);
+  const fedWithheld = w2s.reduce((s, w) => s + w.federalWithheld, 0);
+  eq(1, "1040-1a-wages", k("line1a"), w2s.reduce((s, w) => s + w.wages, 0));
   eq(1, "1040-2b-interest", k("line2b"), t.totalInterest);
   eq(1, "1040-3a-qualified-div", k("line3a"), t.totalQualifiedDividends);
   eq(1, "1040-3b-ordinary-div", k("line3b"), t.totalDividends);
@@ -215,46 +226,81 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line7")));
   eq(1, "1040-15-taxable-income", k("line15"), Math.max(0, n0(k("line11")) - n0(k("line14"))));
 
-  // Refund / amount owed are mutually exclusive (line 37 has no floor yet)
+  // Refund / amount owed are mutually exclusive
   const l34 = n0(k("line34"));
   const l37 = n0(k("line37"));
   checks.push({ phase: 2, id: "1040-refund-xor-owed", ok: l37 >= 0 && !(l34 > 0 && l37 > 0), detail: `34=${money(l34)} 37=${money(l37)}` });
 
+  // Tax, credits and payments: the PDF's own formulas must agree with computeReturn
+  const r = computeReturn(t);
+  const capitalDividends = t.dividend1099s.reduce((s, d) => s + d.totalCapitalGain, 0);
+  const expectedLine7 = t.capitalGains != null || capitalDividends !== 0 ? r.capitalGain : 0;
+  eq(2, "1040-7-capital-gain", k("line7"), expectedLine7);
+  const lineChecks: Array<[string, string, number]> = [
+    ["9", "line9", r.totalIncome], ["11", "line11", r.agi], ["14", "line14", r.totalDeductions],
+    ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
+    ["19", "line19", r.childAndOtherDependentCredit], ["22", "line22", r.taxAfterCredits],
+    ["24", "line24", r.totalTax], ["25d", "line25d", r.totalWithholding], ["33", "line33", r.totalPayments],
+    ["34", "line34", r.overpaid], ["35a", "line35a", r.refund], ["37", "line37", r.amountOwed],
+  ];
+  const mismatched = lineChecks
+    .filter(([, key, expected]) => !near(num(k(key)) ?? 0, round2(expected)))
+    .map(([line, key, expected]) => `line ${line}: ${k(key) || "(blank)"} ≠ ${money(expected)}`);
+  checks.push({ phase: 2, id: "1040-lines-match-computeReturn", ok: !mismatched.length, detail: mismatched.join("; ") || `tax ${money(r.tax)}, refund ${money(r.refund)}, owed ${money(r.amountOwed)}` });
+
+  const banking = ["routing", "account"].every((x) => (k(x) ?? "") !== "");
+  checks.push({ phase: 2, id: "1040-direct-deposit-only-with-refund", ok: banking === r.refund > 0, detail: `refund ${money(r.refund)}, banking ${banking ? "filled" : "blank"}` });
+  const ageOk = (k("youBornBefore") === "Yes") === r.youAre65 && (k("spouseBornBefore") === "Yes") === r.spouseIs65;
+  checks.push({ phase: 2, id: "1040-age-65-boxes", ok: ageOk, detail: `you ${r.youAre65 ? "65+" : "<65"}, spouse ${r.spouseIs65 ? "65+" : "<65"}` });
+
+  // Income the generator cannot yet carry through to the 1040
+  checks.push({ phase: 2, id: "household-within-supported-scope", ok: !r.unsupported.length, detail: r.unsupported.join("; ") || undefined });
+
   return checks;
 }
 
-function documentChecks(t: FakeTaxpayer, runs: Record<string, FormRun>, w2Docs: number): Check[] {
+function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check[] {
   const checks: Check[] = [];
   const map = getFieldMap("f1040", t.taxYear);
-  const f1040 = runs.f1040;
+  const f1040 = docs.f1040?.[0];
   const line = (key: string) => (f1040 && map ? byKey(f1040, map, key) : undefined);
   const fullName = `${t.firstName} ${t.middleInitial} ${t.lastName}`;
+  const sumBy = (runs: FormRun[], pick: (r: FormRun) => string | undefined) => round2(runs.reduce((s, r) => s + n0(pick(r)), 0));
 
   // Single-state households: the second state row on W-2 / 1099s stays blank
   const row2: string[] = [];
   for (const id of ["fw2", "f1099int", "f1099div"]) {
-    const run = runs[id];
-    if (!run) continue;
-    for (const f of run.template.fields) {
-      if (f.fieldType === "checkbox" || !/state/i.test(f.labelHint)) continue;
-      if (!/\.\s*2\.\s*$|^\d+\.\s*2\./.test(f.labelHint)) continue;
-      const v = run.result.fieldValues[f.pdfFieldName];
-      if (v) row2.push(`${id} "${f.labelHint}" = ${v}`);
+    for (const run of docs[id] ?? []) {
+      for (const f of run.template.fields) {
+        if (f.fieldType === "checkbox" || !/state/i.test(f.labelHint)) continue;
+        if (!/\.\s*2\.\s*$|^\d+\.\s*2\./.test(f.labelHint)) continue;
+        const v = run.result.fieldValues[f.pdfFieldName];
+        if (v) row2.push(`${run.label} "${f.labelHint}" = ${v}`);
+      }
     }
   }
   checks.push({ phase: 1, id: "state-row-2-blank", ok: !row2.length, detail: row2.slice(0, 3).join(" | ") || undefined });
 
-  const w2 = runs.fw2;
-  if (w2) {
-    checks.push({ phase: 1, id: "w2-employee-ssn", ok: digits(firstByLabel(w2, /^a\. Employee's social security number/)) === digits(t.ssn) });
-    const box1 = num(firstByLabel(w2, /^1\. Wages, tips, other compensation/));
-    const box2 = num(firstByLabel(w2, /^2\. Federal income tax withheld/));
-    checks.push({ phase: 1, id: "w2-box1-equals-1040-1a", ok: near(box1, n0(line("line1a"))), detail: `W-2 ${box1} vs 1040 ${line("line1a")}` });
-    checks.push({ phase: 1, id: "w2-box2-equals-1040-25a", ok: near(box2, n0(line("line25a"))), detail: `W-2 ${box2} vs 1040 ${line("line25a")}` });
-    checks.push({ phase: 2, id: "w2-one-per-record", ok: w2Docs === t.w2Records.length, detail: `${w2Docs} W-2 document(s), profile has ${t.w2Records.length}` });
+  // ── W-2s ────────────────────────────────────────────────────────────────────
+  const w2Docs = docs.fw2 ?? [];
+  const w2Records = includedW2s(t);
+  if (w2Docs.length) {
+    const box1 = sumBy(w2Docs, (r) => firstByLabel(r, /^1\. Wages, tips, other compensation/));
+    const box2 = sumBy(w2Docs, (r) => firstByLabel(r, /^2\. Federal income tax withheld/));
+    checks.push({ phase: 1, id: "w2-box1-total-equals-1040-1a", ok: near(box1, n0(line("line1a"))), detail: `Σ W-2 ${money(box1)} vs 1040 ${line("line1a")}` });
+    checks.push({ phase: 1, id: "w2-box2-total-equals-1040-25a", ok: near(box2, n0(line("line25a"))), detail: `Σ W-2 ${money(box2)} vs 1040 ${line("line25a")}` });
+    const badEmployee = w2Docs.filter((r, i) => {
+      const rec = w2Records[i];
+      const expected = rec?.employee === "spouse" ? t.spouseSSN : t.ssn;
+      return digits(firstByLabel(r, /^a\. Employee's social security number/)) !== digits(expected ?? "") ||
+        near(num(firstByLabel(r, /^1\. Wages, tips, other compensation/)), rec?.wages ?? NaN) === false;
+    }).map((r) => r.label);
+    checks.push({ phase: 2, id: "w2-each-matches-its-record", ok: !badEmployee.length, detail: badEmployee.join(", ") || w2Docs.map((r) => r.label).join("; ") });
   }
+  checks.push({ phase: 2, id: "w2-one-per-record", ok: w2Docs.length === w2Records.length, detail: `${w2Docs.length} W-2 document(s), return has ${w2Records.length}` });
 
-  const w4 = runs.fw4;
+  // ── W-4 ─────────────────────────────────────────────────────────────────────
+  const w4 = docs.fw4?.[0];
   const w4Map = getFieldMap("fw4", t.taxYear);
   if (w4 && w4Map) {
     const k = (key: string) => byKey(w4, w4Map, key);
@@ -266,39 +312,57 @@ function documentChecks(t: FakeTaxpayer, runs: Record<string, FormRun>, w2Docs: 
     checks.push({ phase: 1, id: "w4-step3-dependents", ok: near(n0(k("line3")), expected), detail: `got ${k("line3") || "(blank)"}, expected ${money(expected)}` });
   }
 
-  const int = runs.f1099int;
-  if (int) {
-    const recipient = firstByLabel(int, /RECIPIENT.S name/i) ?? "";
-    const payer = firstByLabel(int, /PAYER.S name/i) ?? "";
-    checks.push({ phase: 1, id: "1099int-recipient-is-taxpayer", ok: recipient === fullName && recipient !== payer, detail: `recipient "${recipient}"` });
-    checks.push({ phase: 1, id: "1099int-box1-equals-1040-2b", ok: near(n0(firstByLabel(int, /^1\. Interest income/)), n0(line("line2b"))) });
-    checks.push({ phase: 2, id: "1099int-one-per-payer", ok: t.interest1099s.length <= 1, detail: `profile has ${t.interest1099s.length} 1099-INT(s), 1 document filled` });
+  // ── 1099s ───────────────────────────────────────────────────────────────────
+  const intDocs = docs.f1099int ?? [];
+  checks.push({ phase: 2, id: "1099int-one-per-payer", ok: intDocs.length === t.interest1099s.length, detail: `${intDocs.length} document(s), profile has ${t.interest1099s.length} payer(s)` });
+  if (intDocs.length) {
+    const badRecipient = intDocs.filter((r) => {
+      const recipient = firstByLabel(r, /RECIPIENT.S name/i) ?? "";
+      return recipient !== fullName || recipient === (firstByLabel(r, /PAYER.S name/i) ?? "");
+    }).map((r) => r.label);
+    checks.push({ phase: 1, id: "1099int-recipient-is-taxpayer", ok: !badRecipient.length, detail: badRecipient.join(", ") || undefined });
+    const box1 = sumBy(intDocs, (r) => firstByLabel(r, /^1\. Interest income/));
+    checks.push({ phase: 1, id: "1099int-box1-total-equals-1040-2b", ok: near(box1, n0(line("line2b"))), detail: `Σ ${money(box1)} vs ${line("line2b")}` });
+    const badPayer = intDocs.filter((r, i) => (firstByLabel(r, /PAYER.S name/i) ?? "") !== t.interest1099s[i]?.payerName).map((r) => r.label);
+    checks.push({ phase: 2, id: "1099int-payers-match-records", ok: !badPayer.length, detail: badPayer.join(", ") || undefined });
   }
-  const div = runs.f1099div;
-  if (div) {
-    const recipient = firstByLabel(div, /RECIPIENT.S name/i) ?? "";
-    checks.push({ phase: 1, id: "1099div-recipient-is-taxpayer", ok: recipient === fullName, detail: `recipient "${recipient}"` });
-    const payer = firstByLabel(div, /PAYER.S name/i) ?? "";
-    const expectedPayer = t.dividend1099s[0]?.payerName;
-    checks.push({ phase: 1, id: "1099div-payer-is-fund", ok: !expectedPayer || payer === expectedPayer, detail: `payer "${payer}"` });
-    checks.push({ phase: 1, id: "1099div-box1a-equals-1040-3b", ok: near(n0(firstByLine(div, "1a")), n0(line("line3b"))) });
+  const divDocs = docs.f1099div ?? [];
+  checks.push({ phase: 2, id: "1099div-one-per-payer", ok: divDocs.length === t.dividend1099s.length, detail: `${divDocs.length} document(s), profile has ${t.dividend1099s.length} payer(s)` });
+  if (divDocs.length) {
+    const badRecipient = divDocs.filter((r) => (firstByLabel(r, /RECIPIENT.S name/i) ?? "") !== fullName).map((r) => r.label);
+    checks.push({ phase: 1, id: "1099div-recipient-is-taxpayer", ok: !badRecipient.length, detail: badRecipient.join(", ") || undefined });
+    const badPayer = divDocs.filter((r, i) => (firstByLabel(r, /PAYER.S name/i) ?? "") !== t.dividend1099s[i]?.payerName).map((r) => r.label);
+    checks.push({ phase: 1, id: "1099div-payers-match-records", ok: !badPayer.length, detail: badPayer.join(", ") || undefined });
+    const box1a = sumBy(divDocs, (r) => firstByLine(r, "1a"));
+    checks.push({ phase: 1, id: "1099div-box1a-total-equals-1040-3b", ok: near(box1a, n0(line("line3b"))), detail: `Σ ${money(box1a)} vs ${line("line3b")}` });
+    const box2a = sumBy(divDocs, (r) => firstByLine(r, "2a"));
+    const distributions = t.dividend1099s.reduce((s, d) => s + d.totalCapitalGain, 0);
+    checks.push({ phase: 2, id: "1099div-box2a-total-equals-distributions", ok: near(box2a, round2(distributions)), detail: `Σ ${money(box2a)} vs ${money(distributions)}` });
   }
 
-  const schB = runs.f1040sb;
+  // ── Schedule B ──────────────────────────────────────────────────────────────
+  const schB = docs.f1040sb?.[0];
   if (schB) {
+    const schBMap = getFieldMap("f1040sb", t.taxYear);
+    const kb = (key: string) => (schBMap ? byKey(schB, schBMap, key) : undefined);
+    checks.push({ phase: 2, id: "schB-2-equals-payer-total", ok: near(num(kb("line2")) ?? 0, scheduleBInterestTotal(t)), detail: `line 2 ${kb("line2") || "(blank)"}` });
     checks.push({ phase: 2, id: "schB-4-equals-1040-2b", ok: near(n0(firstByLine(schB, "4")), n0(line("line2b"))), detail: `Sch B ${firstByLine(schB, "4")} vs ${line("line2b")}` });
-    checks.push({ phase: 2, id: "schB-6-equals-1040-3b", ok: near(n0(firstByLine(schB, "6")), n0(line("line3b"))), detail: `Sch B ${firstByLine(schB, "6") || "(blank)"} vs ${line("line3b")}` });
+    checks.push({ phase: 2, id: "schB-6-equals-1040-3b", ok: near(n0(kb("line6")), n0(line("line3b"))) && near(n0(kb("line6")), scheduleBDividendTotal(t)), detail: `Sch B ${kb("line6") || "(blank)"} vs ${line("line3b")}` });
+    const rowProblems: string[] = [];
+    t.interest1099s.forEach((p, i) => { if (kb(`int${i + 1}.payer`) !== p.payerName || !near(num(kb(`int${i + 1}.amount`)), p.interestIncome)) rowProblems.push(`interest row ${i + 1}`); });
+    t.dividend1099s.forEach((p, i) => { if (kb(`div${i + 1}.payer`) !== p.payerName || !near(num(kb(`div${i + 1}.amount`)), p.ordinaryDividends)) rowProblems.push(`dividend row ${i + 1}`); });
+    if (kb(`int${t.interest1099s.length + 1}.payer`)) rowProblems.push("extra interest row");
+    if (kb(`div${t.dividend1099s.length + 1}.payer`)) rowProblems.push("extra dividend row");
+    checks.push({ phase: 2, id: "schB-payer-rows", ok: !rowProblems.length, detail: rowProblems.join(", ") || undefined });
   }
 
-  // Form selection (Phase 3): only include schedules the household needs.
-  const included = (id: string) => !!runs[id];
+  // ── Form selection (Phase 3): only include schedules the household needs ──
+  const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needs: Array<[string, boolean]> = [
     ["f1040sa", !t.takesStandardDeduction],
     ["f1040sc", t.businessIncome != null],
     ["f1040sd", t.capitalGains != null],
     ["f1040se", t.rentalIncome != null],
-    ["f1099int", t.interest1099s.length > 0],
-    ["f1099div", t.dividend1099s.length > 0],
   ];
   const wrong = needs.filter(([id, need]) => included(id) !== need).map(([id, need]) => `${id} ${need ? "missing" : "not needed"}`);
   checks.push({ phase: 3, id: "form-set-matches-household", ok: !wrong.length, detail: wrong.join(", ") || undefined });
@@ -333,31 +397,39 @@ function documentChecks(t: FakeTaxpayer, runs: Record<string, FormRun>, w2Docs: 
       process.env.OUTPUT_DIR = path.join(outDir, `${profile}_${year}`);
       const t = createTaxpayer(seed, year);
 
-      const runs: Record<string, FormRun> = {};
+      const docs: Record<string, FormRun[]> = {};
       const errors: string[] = [];
       for (const formId of COMMON_FORMS) {
         try {
           const template = await loadTemplate(formId);
-          runs[formId] = { template, result: await fillForm(template, t) };
+          docs[formId] = [];
+          for (const doc of documentsFor(formId, t)) {
+            const result = await fillForm(template, doc.view, undefined, doc.count > 1 ? `doc${doc.index}` : undefined);
+            docs[formId].push({ template, result, label: doc.count > 1 ? `${formId}#${doc.index}` : formId, view: doc.view });
+          }
         } catch (err) {
           errors.push(`${formId}: ${(err as Error).message}`);
         }
       }
+      const allRuns = Object.values(docs).flat();
+      const runs: Record<string, FormRun> = Object.fromEntries(
+        Object.entries(docs).filter(([, list]) => list.length).map(([id, list]) => [id, list[0]])
+      );
 
       const checks: Check[] = [
         { phase: 1, id: "all-forms-filled", ok: !errors.length, detail: errors.join(" | ") || undefined },
-        ...genericChecks(runs),
+        ...genericChecks(allRuns),
         ...f1040Checks(t, runs),
-        ...documentChecks(t, runs, runs.fw2 ? 1 : 0),
+        ...documentChecks(t, docs),
       ];
 
       // ── Print ────────────────────────────────────────────────────────────
       console.log(chalk.bold(`\n${profile} ${year} (seed ${seed}, ${t.filingStatus}, ${t.dependents.length} dep)`));
-      console.log(chalk.gray("  form       filled  blank  mapped  calc  skipped  warnings"));
-      for (const [id, r] of Object.entries(runs)) {
+      console.log(chalk.gray("  form         filled  blank  mapped  calc  skipped  warnings"));
+      for (const r of allRuns) {
         const m = r.result;
         console.log(chalk.gray(
-          `  ${id.padEnd(9)} ${String(m.filledCount).padStart(6)} ${String(m.blankCount).padStart(6)} ${String(m.mappedCount).padStart(7)} ${String(m.calculatedCount).padStart(5)} ${String(m.skippedCount).padStart(8)} ${String(m.warnings.length).padStart(9)}`
+          `  ${r.label.padEnd(11)} ${String(m.filledCount).padStart(6)} ${String(m.blankCount).padStart(6)} ${String(m.mappedCount).padStart(7)} ${String(m.calculatedCount).padStart(5)} ${String(m.skippedCount).padStart(8)} ${String(m.warnings.length).padStart(9)}`
         ));
       }
       for (const c of checks) {
@@ -375,7 +447,7 @@ function documentChecks(t: FakeTaxpayer, runs: Record<string, FormRun>, w2Docs: 
 
       report.push({
         profile, year, seed, taxpayer: t, checks,
-        forms: Object.fromEntries(Object.entries(runs).map(([id, r]) => [id, {
+        forms: Object.fromEntries(allRuns.map((r) => [r.label, {
           filledCount: r.result.filledCount, blankCount: r.result.blankCount, mappedCount: r.result.mappedCount,
           calculatedCount: r.result.calculatedCount, skippedCount: r.result.skippedCount,
           warnings: r.result.warnings, fieldValues: r.result.fieldValues,

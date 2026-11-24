@@ -18,6 +18,7 @@
     "fill:common": "ts-node scripts/fill.ts --forms f1040,fw2,f1040sa,f1040sb,f1040sc,f1040sd,f1040se,f1099int,f1099div,fw4",
 
     "validate": "ts-node scripts/validate.ts",
+    "answer-key": "ts-node scripts/answer-key.ts",
 
     "forms": "ts-node --transpile-only -e \"const {FORM_REGISTRY}=require('./src/registry/forms');FORM_REGISTRY.filter((f)=>f.pdfAvailable!==false).forEach((f)=>console.log(f.id.padEnd(16),f.displayName));\""
   },

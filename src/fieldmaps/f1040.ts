@@ -9,7 +9,8 @@
  * left blank / unchecked.
  */
 import { FakeTaxpayer, FilingStatus } from "../faker/taxpayer";
-import { standardDeduction } from "../config/tax-year";
+import { computeReturn } from "../tax/compute";
+import { qualifiesForChildTaxCredit, qualifiesForOtherDependentCredit } from "../tax/household";
 import { BLANK, CHECK, FieldMap, FieldValue, MappedField, OFF, checkIf, money } from "./types";
 
 const P1 = "topmostSubform[0].Page1[0].";
@@ -51,10 +52,13 @@ const spouseFullName = (t: FakeTaxpayer) =>
   [t.spouseFirstName, t.spouseLastName ?? t.lastName].filter(Boolean).join(" ");
 
 export function deductionAmount(t: FakeTaxpayer): number {
-  return t.takesStandardDeduction || t.itemizedDeductionTotal == null
-    ? standardDeduction(t.taxYear, t.filingStatus)
-    : t.itemizedDeductionTotal;
+  return computeReturn(t).deduction;
 }
+
+const r = computeReturn;
+const hasRefund = (t: FakeTaxpayer) => r(t).refund > 0;
+const moneyOrBlank = (n: number) => (n === 0 ? BLANK : money(n));
+const hasCapitalActivity = (t: FakeTaxpayer) => t.capitalGains != null || r(t).capitalGainDistributions !== 0;
 
 const TEXT_VALUES: Record<string, FieldValue> = {
   firstName:        (t) => `${t.firstName} ${t.middleInitial}`.trim(),
@@ -70,16 +74,23 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   state:            (t) => t.state,
   zip:              (t) => t.zipCode,
   mfsSpouseName:    (t) => (t.filingStatus === "MFS" ? spouseFullName(t) : BLANK),
-  line1a:           (t) => money(t.totalWages),
-  line2b:           (t) => money(t.totalInterest),
-  line3a:           (t) => money(t.totalQualifiedDividends),
-  line3b:           (t) => money(t.totalDividends),
+  line1a:           (t) => money(r(t).wages),
+  line2b:           (t) => money(r(t).taxableInterest),
+  line3a:           (t) => money(r(t).qualifiedDividends),
+  line3b:           (t) => money(r(t).ordinaryDividends),
   line6a:           (t) => money(t.socialSecurityBenefits),
-  line7:            (t) => money(t.capitalGains),
-  line12:           (t) => money(deductionAmount(t)),
-  line25a:          (t) => money(t.w2Records.reduce((s, w) => s + w.federalWithheld, 0)),
-  routing:          (t) => t.routingNumber,
-  account:          (t) => t.accountNumber,
+  line7:            (t) => (hasCapitalActivity(t) ? money(r(t).capitalGain) : BLANK),
+  line12:           (t) => money(r(t).deduction),
+  line16:           (t) => money(r(t).tax),
+  line19:           (t) => moneyOrBlank(r(t).childAndOtherDependentCredit),
+  line25a:          (t) => money(r(t).w2Withholding),
+  line25b:          (t) => moneyOrBlank(r(t).form1099Withholding),
+  line26:           (t) => moneyOrBlank(r(t).estimatedPayments),
+  line35a:          (t) => moneyOrBlank(r(t).refund),
+  line37:           (t) => moneyOrBlank(r(t).amountOwed),
+  // Direct deposit only when there is a refund to deposit.
+  routing:          (t) => (hasRefund(t) ? t.routingNumber : BLANK),
+  account:          (t) => (hasRefund(t) ? t.accountNumber : BLANK),
   occupation:       (t) => t.occupation,
   spouseOccupation: (t) => (hasJointSpouse(t) ? t.spouseOccupation ?? BLANK : BLANK),
   phone:            (t) => t.phone,
@@ -92,8 +103,12 @@ const CHECKBOX_VALUES: Record<string, FieldValue> = {
   digitalAssetsYes: () => OFF,
   digitalAssetsNo:  () => CHECK,
   moreThan4Deps:    (t) => checkIf(t.dependents.length > 4),
-  checking:         (t) => checkIf(t.accountType === "Checking"),
-  savings:          (t) => checkIf(t.accountType === "Savings"),
+  checking:         (t) => checkIf(hasRefund(t) && t.accountType === "Checking"),
+  savings:          (t) => checkIf(hasRefund(t) && t.accountType === "Savings"),
+  // Only capital gain distributions (1099-DIV box 2a) → Schedule D not required.
+  scheduleDNotRequired: (t) => checkIf(!r(t).scheduleDRequired && r(t).capitalGainDistributions > 0),
+  youBornBefore:    (t) => checkIf(r(t).youAre65),
+  spouseBornBefore: (t) => checkIf(r(t).spouseIs65),
   designeeYes:      () => OFF,
   designeeNo:       () => CHECK,
   mainHomeInUS:     () => CHECK,
@@ -127,8 +142,8 @@ function buildMap(taxYear: number, layout: Layout1040): FieldMap {
     if (slot.last)  add(slot.last,  `${k}.last`,  (t) => dep(t)?.lastName ?? BLANK);
     add(slot.ssn,          `${k}.ssn`,          (t) => dep(t)?.ssn ?? BLANK);
     add(slot.relationship, `${k}.relationship`, (t) => dep(t)?.relationship ?? BLANK);
-    add(slot.ctc,          `${k}.ctc`,          (t) => checkIf(!!dep(t)?.qualifiesChildTaxCredit));
-    add(slot.odc,          `${k}.odc`,          (t) => checkIf(!!dep(t)?.qualifiesOtherDependent));
+    add(slot.ctc,          `${k}.ctc`,          (t) => checkIf(!!dep(t) && qualifiesForChildTaxCredit(dep(t), t.taxYear)));
+    add(slot.odc,          `${k}.odc`,          (t) => checkIf(!!dep(t) && qualifiesForOtherDependentCredit(dep(t), t.taxYear)));
     const livedHalfYear = (t: FakeTaxpayer) => checkIf(!!dep(t) && dep(t).monthsInHome > 6);
     if (slot.livedWithYou) add(slot.livedWithYou, `${k}.livedWithYou`, livedHalfYear);
     if (slot.livedInUS)    add(slot.livedInUS,    `${k}.livedInUS`,    livedHalfYear);
@@ -149,7 +164,13 @@ const DEPS = `${P1}Table_Dependents[0].`;
 /** 2023/2024 page 2 share field names. */
 const PAGE2_2023_2024 = {
   text: {
+    line16: `${P2}f2_02[0]`,
+    line19: `${P2}f2_05[0]`,
     line25a: `${P2}f2_11[0]`,
+    line25b: `${P2}f2_12[0]`,
+    line26: `${P2}f2_15[0]`,
+    line35a: `${P2}f2_24[0]`,
+    line37: `${P2}f2_28[0]`,
     routing: `${P2}RoutingNo[0].f2_25[0]`,
     account: `${P2}AccountNo[0].f2_26[0]`,
     occupation: `${P2}f2_33[0]`,
@@ -166,9 +187,12 @@ const PAGE2_2023_2024 = {
     designeeNo: `${P2}c2_6[1]`,
   },
   computed: {
+    line18: `${P2}f2_04[0]`,
+    line22: `${P2}f2_08[0]`,
+    line24: `${P2}f2_10[0]`,
+    line25d: `${P2}f2_14[0]`,
     line33: `${P2}f2_22[0]`,
     line34: `${P2}f2_23[0]`,
-    line37: `${P2}f2_28[0]`,
   },
 };
 
@@ -218,6 +242,9 @@ const LAYOUT_2023: Layout1040 = {
     digitalAssetsYes: `${P1}c1_4[0]`,
     digitalAssetsNo: `${P1}c1_4[1]`,
     moreThan4Deps: `${P1}Dependents_ReadOrder[0].c1_12[0]`,
+    scheduleDNotRequired: `${L4}c1_22[0]`,
+    youBornBefore: `${P1}c1_8[0]`,
+    spouseBornBefore: `${P1}c1_10[0]`,
     ...PAGE2_2023_2024.checkbox,
   },
   // 2023 numbers the five boxes left column then right column out of order.
@@ -256,6 +283,9 @@ const LAYOUT_2024: Layout1040 = {
     digitalAssetsYes: `${P1}c1_5[0]`,
     digitalAssetsNo: `${P1}c1_5[1]`,
     moreThan4Deps: `${P1}Dependents_ReadOrder[0].c1_13[0]`,
+    scheduleDNotRequired: `${L4}c1_23[0]`,
+    youBornBefore: `${P1}c1_9[0]`,
+    spouseBornBefore: `${P1}c1_11[0]`,
     ...PAGE2_2023_2024.checkbox,
   },
   filingStatus: {
@@ -317,7 +347,13 @@ const LAYOUT_2025: Layout1040 = {
     line6a: `${P1}f1_68[0]`,
     line7: `${P1}f1_70[0]`,
     line12: `${P2}f2_02[0]`,
+    line16: `${P2}f2_08[0]`,
+    line19: `${P2}f2_11[0]`,
     line25a: `${P2}f2_17[0]`,
+    line25b: `${P2}f2_18[0]`,
+    line26: `${P2}f2_21[0]`,
+    line35a: `${P2}f2_31[0]`,
+    line37: `${P2}f2_35[0]`,
     routing: `${P2}RoutingNo[0].f2_32[0]`,
     account: `${P2}AccountNo[0].f2_33[0]`,
     occupation: `${P2}f2_40[0]`,
@@ -332,6 +368,9 @@ const LAYOUT_2025: Layout1040 = {
     digitalAssetsYes: `${P1}c1_10[0]`,
     digitalAssetsNo: `${P1}c1_10[1]`,
     moreThan4Deps: `${P1}Dependents_ReadOrder[0].c1_11[0]`,
+    scheduleDNotRequired: `${P1}c1_43[0]`,
+    youBornBefore: `${P2}c2_5[0]`,
+    spouseBornBefore: `${P2}c2_7[0]`,
     checking: `${P2}c2_16[0]`,
     savings: `${P2}c2_16[1]`,
     designeeYes: `${P2}c2_17[0]`,
@@ -350,9 +389,12 @@ const LAYOUT_2025: Layout1040 = {
     line11: `${P1}f1_75[0]`,
     line14: `${P2}f2_05[0]`,
     line15: `${P2}f2_06[0]`,
+    line18: `${P2}f2_10[0]`,
+    line22: `${P2}f2_14[0]`,
+    line24: `${P2}f2_16[0]`,
+    line25d: `${P2}f2_20[0]`,
     line33: `${P2}f2_29[0]`,
     line34: `${P2}f2_30[0]`,
-    line37: `${P2}f2_35[0]`,
   },
 };
 

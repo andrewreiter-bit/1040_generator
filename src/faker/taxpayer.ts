@@ -31,6 +31,8 @@ export interface W2Record {
   stateWages: number;             // Box 16
   stateWithheld: number;          // Box 17
   stateCode: string;              // Box 15
+  /** Whose W-2 this is. Omitted = primary taxpayer. A spouse W-2 appears only on MFJ returns. */
+  employee?: "primary" | "spouse";
 }
 
 export interface Interest1099 {
@@ -39,6 +41,8 @@ export interface Interest1099 {
   interestIncome: number;
   earlyWithdrawalPenalty: number;
   usSavingsBondInterest: number;
+  /** Box 4. Omitted = none. */
+  federalWithheld?: number;
 }
 
 export interface Dividend1099 {
@@ -47,6 +51,8 @@ export interface Dividend1099 {
   ordinaryDividends: number;
   qualifiedDividends: number;
   totalCapitalGain: number;
+  /** Box 4. Omitted = none. */
+  federalWithheld?: number;
 }
 
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
@@ -101,6 +107,9 @@ export interface FakeTaxpayer {
   rentalIncome: number | null;
   capitalGains: number | null;
   socialSecurityBenefits: number | null;
+
+  /** Estimated tax payments plus any overpayment applied from the prior year (1040 line 26). */
+  estimatedTaxPayments?: number;
 
   // Deductions
   takesStandardDeduction: boolean;

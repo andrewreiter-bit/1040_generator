@@ -7,6 +7,7 @@ import {
   Dividend1099,
   FilingStatus,
 } from "./taxpayer";
+import { ssWageBase } from "./tax-year";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -85,10 +86,10 @@ function buildDependent(faker: Faker, taxpayerBirthYear: number): Dependent {
 
 // ─── W-2 Builder ─────────────────────────────────────────────────────────────
 
-function buildW2(faker: Faker, state: string): W2Record {
+function buildW2(faker: Faker, state: string, taxYear: number): W2Record {
   const wages = fakeDollar(faker, 25000, 150000);
   const federalWithheld = Math.round(wages * faker.number.float({ min: 0.12, max: 0.24, fractionDigits: 3 }) * 100) / 100;
-  const ssWages = Math.min(wages, 176100); // 2025 SS wage base
+  const ssWages = Math.min(wages, ssWageBase(taxYear));
   const ssWithheld = Math.round(ssWages * 0.062 * 100) / 100;
   const medicareWages = wages;
   const medicareWithheld = Math.round(wages * 0.0145 * 100) / 100;
@@ -132,7 +133,9 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
 
   // W-2s: 1-2 records
   const w2Count = faker.number.int({ min: 1, max: 2 });
-  const w2Records: W2Record[] = Array.from({ length: w2Count }, () => buildW2(faker, state));
+  // On a joint return the second W-2 belongs to the spouse (no extra RNG draws).
+  const w2Records: W2Record[] = Array.from({ length: w2Count }, () => buildW2(faker, state, taxYear))
+    .map((w, i) => (i === 1 && filingStatus === "MFJ" ? { ...w, employee: "spouse" as const } : w));
   const totalWages = w2Records.reduce((s, w) => s + w.wages, 0);
 
   // 1099-INTs: 0-2
