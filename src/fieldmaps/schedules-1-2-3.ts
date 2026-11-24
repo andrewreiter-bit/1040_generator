@@ -246,6 +246,39 @@ function form8960(taxYear: number): FieldMap {
   return build();
 }
 
-export const SCHEDULE_1_2_3_MAPS: FieldMap[] = [2023, 2024, 2025].flatMap((y) => [
-  schedule1(y), schedule2(y), schedule3(y), form8995(y), form8959(y), form8960(y),
-]);
+/**
+ * 2025 Schedule 1-A (Additional Deductions): Part I (modified AGI), Part V
+ * (enhanced deduction for seniors) and Part VI (total → Form 1040 line 13b).
+ * Parts II–IV (tips, overtime, car loan interest) are not modelled and stay blank.
+ */
+function schedule1A_2025(): FieldMap {
+  const F = fieldIn("form1[0]");
+  const { add, build } = mapBuilder("f1040s1a", 2025);
+  const a = (x: ReturnLines) => x.schedule1A;
+  const amt = (pick: (s: NonNullable<ReturnLines["schedule1A"]>) => number) => (x: ReturnLines) => (a(x) ? money(pick(a(x)!)) : BLANK);
+  add(F("P1.f1_01"), "names", names);
+  add(F("P1.f1_02"), "ssn", ssn);
+  add(F("P1.f1_03"), "line1", amt((s) => s.magi));
+  for (const n of [4, 5, 6, 7, 8]) add(F(`P1.f1_0${n}`), `line2.f1_0${n}`, () => BLANK);   // 2a–2e: no exclusions
+  add(F("P1.f1_09"), "line3", amt((s) => s.magi));
+  for (let n = 10; n <= 31; n++) add(F(`P1.f1_${n}`), `partII-III.f1_${n}`, () => BLANK, true);
+  const p4 = ["Table_Line22[0].Line22a[0].VIN-1_Comb[0].f2_01", "Table_Line22[0].Line22a[0].f2_02", "Table_Line22[0].Line22a[0].f2_03",
+    "Table_Line22[0].Line22b[0].VIN-2_Comb[0].f2_04", "Table_Line22[0].Line22b[0].f2_05", "Table_Line22[0].Line22b[0].f2_06"];
+  p4.forEach((f, i) => add(F(`P2.${f}`), `partIV.line22.${i}`, () => BLANK, true));
+  for (let n = 7; n <= 14; n++) add(F(`P2.f2_${String(n).padStart(2, "0")}`), `partIV.f2_${n}`, () => BLANK, true);
+  add(F("P2.f2_15"), "line31", amt((s) => s.magi));
+  add(F("P2.f2_16"), "line32", (x, t) => (a(x) ? money(t.filingStatus === "MFJ" ? 150000 : 75000) : BLANK));
+  add(F("P2.f2_17"), "line33", amt((s) => s.line33));
+  add(F("P2.f2_18"), "line34", (x) => (a(x)?.line33 ? money(a(x)!.line34) : BLANK));
+  add(F("P2.f2_19"), "line35", amt((s) => s.line35));
+  add(F("P2.f2_20"), "line36a", (x) => moneyOrBlank(a(x)?.line36a));
+  add(F("P2.f2_21"), "line36b", (x) => moneyOrBlank(a(x)?.line36b));
+  add(F("P2.f2_22"), "line37", amt((s) => s.line37));
+  add(F("P2.f2_23"), "line38", amt((s) => s.line38));
+  return build();
+}
+
+export const SCHEDULE_1_2_3_MAPS: FieldMap[] = [
+  ...[2023, 2024, 2025].flatMap((y) => [schedule1(y), schedule2(y), schedule3(y), form8995(y), form8959(y), form8960(y)]),
+  schedule1A_2025(),
+];

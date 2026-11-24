@@ -36,7 +36,7 @@ import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 
 const COMMON_FORMS = [
-  "f1040", "f1040s1", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
+  "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
   "f8959", "f8960", "f8949", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "fw4",
 ];
@@ -248,7 +248,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   const lineChecks: Array<[string, string, number]> = [
     ["6a", "line6a", r.socialSecurity.line1], ["6b", "line6b", r.socialSecurity.taxable],
     ["8", "line8", r.additionalIncome], ["9", "line9", r.totalIncome], ["10", "line10", r.adjustments],
-    ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["14", "line14", r.totalDeductions],
+    ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["13b", "line13b", r.additionalDeductions], ["14", "line14", r.totalDeductions],
     ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
     ["19", "line19", r.childAndOtherDependentCredit], ["22", "line22", r.taxAfterCredits], ["23", "line23", r.otherTaxes],
     ["24", "line24", r.totalTax], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
@@ -428,6 +428,8 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "sch1-26-equals-1040-10", n0(s1("line26")), n0(line("line10")), "Schedule 1 line 26 vs 1040 line 10");
     tie(2, "sch1-3-equals-schC-total", n0(s1("line3")), r.schedule1.businessIncome, "Schedule 1 line 3 vs Σ Sch C 31");
   }
+  const s1a = keyed(docs.f1040s1a?.[0], "f1040s1a");
+  if (docs.f1040s1a?.length) tie(2, "sch1A-38-equals-1040-13b", n0(s1a("line38")), n0(line("line13b")), "Schedule 1-A line 38 vs 1040 line 13b");
   const s2 = keyed(docs.f1040s2?.[0], "f1040s2");
   if (docs.f1040s2?.length) tie(2, "sch2-21-equals-1040-23", n0(s2("line21")), n0(line("line23")), "Schedule 2 line 21 vs 1040 line 23");
   const s3 = keyed(docs.f1040s3?.[0], "f1040s3");
@@ -545,7 +547,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8959", "f8960", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8959", "f8960", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];
@@ -586,9 +588,11 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
       const errors: string[] = [];
       for (const formId of COMMON_FORMS) {
         try {
-          const template = await loadTemplate(formId);
           docs[formId] = [];
-          for (const doc of documentsFor(formId, t)) {
+          const needed = documentsFor(formId, t);
+          if (!needed.length) continue;   // e.g. a 2025-only schedule on a 2023 return: no template needed
+          const template = await loadTemplate(formId);
+          for (const doc of needed) {
             const result = await fillForm(template, doc.view, undefined, doc.count > 1 ? `doc${doc.index}` : undefined);
             docs[formId].push({ template, result, label: doc.count > 1 ? `${formId}#${doc.index}` : formId, view: doc.view });
           }

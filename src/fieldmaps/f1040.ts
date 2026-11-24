@@ -85,6 +85,7 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   line10:           (t) => (r(t).schedule1.required ? money(r(t).adjustments) : BLANK),
   line12:           (t) => money(r(t).deduction),
   line13:           (t) => moneyOrBlank(r(t).qbiDeduction),
+  line13b:          (t) => moneyOrBlank(r(t).additionalDeductions),
   line16:           (t) => money(r(t).tax),
   line19:           (t) => moneyOrBlank(r(t).childAndOtherDependentCredit),
   line23:           (t) => moneyOrBlank(r(t).otherTaxes),
@@ -380,6 +381,7 @@ const LAYOUT_2025: Layout1040 = {
     line10: `${P1}f1_74[0]`,
     line12: `${P2}f2_02[0]`,
     line13: `${P2}f2_03[0]`,   // 13a
+    line13b: `${P2}f2_04[0]`,  // Schedule 1-A
     line16: `${P2}f2_08[0]`,
     line19: `${P2}f2_11[0]`,
     line23: `${P2}f2_15[0]`,

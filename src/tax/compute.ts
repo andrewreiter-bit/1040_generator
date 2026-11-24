@@ -17,6 +17,7 @@ import {
   CREDIT_FOR_OTHER_DEPENDENTS,
   CTC_PHASEOUT_THRESHOLD,
   EDUCATOR_EXPENSE_LIMIT,
+  SENIOR_DEDUCTION,
   STUDENT_LOAN_INTEREST,
   additionalStandardDeduction,
   capitalGainsThresholds,
@@ -94,6 +95,9 @@ export interface ReturnLines {
   spouseIs65: boolean;
   deduction: number;           // 12 / 12e
   qbiDeduction: number;        // 13 / 13a
+  /** 2025 Schedule 1-A (line 38 → Form 1040 line 13b); only Part V (seniors) is modelled. */
+  schedule1A?: { magi: number; line33: number; line34: number; line35: number; line36a: number; line36b: number; line37: number; line38: number };
+  additionalDeductions: number; // 13b
   totalDeductions: number;     // 14
   taxableIncome: number;       // 15
   tax: number;                 // 16
@@ -269,16 +273,28 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   if (itemizes && schA && (schA.line11 > agi * 0.6 || schA.line12 > agi * 0.3)) {
     unsupported.push("charitable contributions over the AGI limits (§ 170(b))");
   }
-  if (t.taxYear >= 2025 && (youAre65 || spouseIs65)) {
-    unsupported.push("2025 Schedule 1-A senior deduction (line 13b)");
+  // 2025 Schedule 1-A Part V: enhanced deduction for seniors (married couples must file jointly).
+  let schedule1A: ReturnLines["schedule1A"];
+  const sd = SENIOR_DEDUCTION;
+  if (t.taxYear >= sd.firstYear && t.taxYear <= sd.lastYear && t.filingStatus !== "MFS" && (youAre65 || spouseIs65)) {
+    const magi = agi;   // + foreign / Puerto Rico exclusions: none modelled
+    const line33 = Math.max(0, round2(magi - (t.filingStatus === "MFJ" ? sd.threshold.joint : sd.threshold.other)));
+    const line34 = round2(line33 * sd.phaseoutRate);
+    const line35 = Math.max(0, round2(sd.amount - line34));
+    const line36a = youAre65 && t.ssn ? line35 : 0;
+    const line36b = spouseIs65 && t.spouseSSN ? line35 : 0;
+    const line37 = round2(line36a + line36b);
+    schedule1A = { magi, line33, line34, line35, line36a, line36b, line37, line38: line37 };
   }
+  const additionalDeductions = schedule1A?.line38 ?? 0;
   let qbi: Form8995Lines | undefined;
   if (scheduleCs.length || t.priorYearQbiLoss) {
-    qbi = form8995(bizDed.qbiByBusiness, Math.max(0, round2(agi - deduction)), round2(qualifiedDividends + netCapitalGain), t, R);
+    // Form 8995 line 11: taxable income before the QBI deduction (2025: after line 13b).
+    qbi = form8995(bizDed.qbiByBusiness, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R);
     if (qbi.overThreshold && qbi.netQbi > 0) unsupported.push("QBI deduction above the § 199A threshold (Form 8995-A)");
   }
   const qbiDeduction = qbi && !qbi.overThreshold ? qbi.deduction : 0;
-  const totalDeductions = round2(deduction + qbiDeduction);
+  const totalDeductions = round2(deduction + qbiDeduction + additionalDeductions);
   const taxableIncome = Math.max(0, round2(agi - totalDeductions));
 
   // ── Tax ───────────────────────────────────────────────────────────────────
@@ -365,7 +381,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
     capitalGain, netCapitalGain, scheduleDRequired, capital, socialSecurity, standardDeductionAmount, itemizes,
     scheduleA: itemizes ? schA : undefined, scheduleE: schE, additionalIncome, totalIncome, adjustments, agi,
-    youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, totalDeductions, taxableIncome,
+    youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,

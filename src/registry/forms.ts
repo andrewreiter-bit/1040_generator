@@ -99,6 +99,7 @@ export const FORM_REGISTRY: FormEntry[] = [
     "Credits for Qualifying Children and Other Dependents",
   ),
   irs("f1040sei", "Schedule EIC", "schedule", "Earned Income Credit"),
+  irs("f1040s1a", "Schedule 1-A", "schedule", "Additional Deductions (2025–2028)"),
 
   // ═══════════════════════════════════════════════════════════════════════════
   // B. INDIVIDUAL SUPPORTING FORMS

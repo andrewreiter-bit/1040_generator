@@ -180,6 +180,14 @@ export const SOCIAL_SECURITY_TAXABILITY = {
   secondTierRate: 0.85,
 };
 
+/**
+ * 2025 Schedule 1-A Part V, enhanced deduction for seniors (OBBBA § 70103):
+ * $6,000 per spouse born before January 2, 1961 with a valid SSN, less 6% of
+ * modified AGI over $75,000 ($150,000 joint); married couples must file jointly.
+ * Tax years 2025–2028.
+ */
+export const SENIOR_DEDUCTION = { amount: 6000, phaseoutRate: 0.06, threshold: { joint: 150000, other: 75000 }, firstYear: 2025, lastYear: 2028 };
+
 export const EDUCATOR_EXPENSE_LIMIT = 300;
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
 /** § 199A deduction rate. */

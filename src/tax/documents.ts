@@ -47,6 +47,7 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.capital.scheduleD) out.push("f1040sd");
   if (r.capital.rows.some((x) => !x.directToScheduleD)) out.push("f8949");
   if (r.schedule1.required) out.push("f1040s1");
+  if (r.additionalDeductions > 0) out.push("f1040s1a");
   if (r.schedule2.required) out.push("f1040s2");
   if (r.schedule3.required) out.push("f1040s3");
   if (r.scheduleC.length) out.push("f1040sc");
@@ -75,6 +76,7 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f1040s1": return single(formId, t, "Schedule 1");
     case "f1040s2": return single(formId, t, "Schedule 2");
     case "f1040s3": return single(formId, t, "Schedule 3");
+    case "f1040s1a": return single(formId, t, "Schedule 1-A");
     case "f8995":   return single(formId, t, "Form 8995");
     case "f1040sd": return single(formId, t, "Schedule D");
     case "f1040sa": return single(formId, t, "Schedule A");
