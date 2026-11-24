@@ -204,7 +204,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
     const name = k(`dep${i + 1}.name`) ?? k(`dep${i + 1}.first`) ?? "";
     if (digits(ssn) !== digits(dep?.ssn)) depProblems.push(`dep${i + 1} ssn "${ssn}"`);
     if (dep ? !name.includes(dep.firstName) : name !== "") depProblems.push(`dep${i + 1} name "${name}"`);
-    if ((k(`dep${i + 1}.ctc`) === "Yes") !== (!!dep && qualifiesForChildTaxCredit(dep, t.taxYear))) depProblems.push(`dep${i + 1} CTC box`);
+    if ((k(`dep${i + 1}.ctc`) === "Yes") !== (!!dep && qualifiesForChildTaxCredit(dep, t))) depProblems.push(`dep${i + 1} CTC box`);
     if ((k(`dep${i + 1}.relationship`) ?? "") !== (dep?.relationship ?? "")) depProblems.push(`dep${i + 1} relationship`);
   }
   checks.push({ phase: 1, id: "1040-dependents", ok: !depProblems.length, detail: depProblems.join("; ") || `${t.dependents.length} dependent(s)` });
@@ -231,6 +231,10 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line7")) + n0(k("line8")));
   eq(1, "1040-15-taxable-income", k("line15"), Math.max(0, n0(k("line11")) - n0(k("line14"))));
 
+  // A dependent can't be born after the tax year
+  const unborn = t.dependents.filter((d) => d.birthYear > t.taxYear).map((d) => `${d.firstName} born ${d.birthYear}`);
+  checks.push({ phase: 2, id: "dependents-born-by-year-end", ok: !unborn.length, detail: unborn.join(", ") || undefined });
+
   // Refund / amount owed are mutually exclusive
   const l34 = n0(k("line34"));
   const l37 = n0(k("line37"));
@@ -247,6 +251,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
     ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
     ["19", "line19", r.childAndOtherDependentCredit], ["22", "line22", r.taxAfterCredits], ["23", "line23", r.otherTaxes],
     ["24", "line24", r.totalTax], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
+    ["27", "line27", r.earnedIncomeCredit], ["28", "line28", r.additionalChildTaxCredit],
     ["31", "line31", r.scheduleThreePayments], ["32", "line32", r.refundableCredits], ["33", "line33", r.totalPayments],
     ["34", "line34", r.overpaid], ["35a", "line35a", r.refund], ["37", "line37", r.amountOwed],
   ];
@@ -368,7 +373,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const gaps = scheduleGaps(t);
   checks.push({
     phase: 2, id: "needed-schedules-have-year-maps", ok: !gaps.length,
-    detail: gaps.length ? `${gaps.join(", ")}: no ${t.taxYear} field map (forms_${t.taxYear}/ holds another year's PDF)` : undefined,
+    detail: gaps.length ? `${gaps.join(", ")}: no ${t.taxYear} field map (that year's PDF is missing or the wrong revision)` : undefined,
   });
   const keyed = (run: FormRun | undefined, formId: string) => {
     const m = getFieldMap(formId, t.taxYear);
@@ -439,7 +444,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     ["f1040sa", !t.takesStandardDeduction],
     ["f1040sd", t.capitalGains != null],
     ["f1040se", t.rentalIncome != null],
-    ...["f1040s1", "f1040s2", "f1040s3", "f1040sc", "f1040sse", "f8995", "f8959", "f8960"]
+    ...["f1040s1", "f1040s2", "f1040s3", "f1040sc", "f1040sse", "f8995", "f8959", "f8960", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

@@ -55,7 +55,7 @@ const opts = program.opts();
   if (result.missingSchedules.length > 0) {
     const ids = [...new Set(result.missingSchedules.map((n) => n.formId))].join(", ");
     const year = result.missingSchedules[0].taxYear;
-    console.log(chalk.yellow(`  ! NOT INCLUDED but the return needs: ${ids} — no ${year} field map (forms_${year}/ holds another year's PDF). The 1040 totals still include them.`));
+    console.log(chalk.yellow(`  ! NOT INCLUDED but the return needs: ${ids} — no ${year} field map (that year's PDF is missing or the wrong revision). The 1040 totals still include them.`));
   }
   if (result.totalFailed > 0) {
     console.log(chalk.red(`  ✗ ${result.totalFailed} failed`));

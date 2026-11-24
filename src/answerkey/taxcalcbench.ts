@@ -17,6 +17,7 @@ import path from "path";
 import { Dependent, FakeTaxpayer, FilingStatus, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { saversCreditAgiLimit } from "../config/tax-year";
+import { isQualifyingChild } from "../tax/household";
 
 type Json = unknown;
 
@@ -46,8 +47,8 @@ export const SCORED_LINES: ScoredLine[] = [
   { line: "24",  element: "TotalTaxAmt",                    pick: (r) => r.totalTax },
   { line: "25d", element: "WithholdingTaxAmt",              pick: (r) => r.totalWithholding },
   { line: "26",  element: "EstimatedTaxPaymentsAmt",        pick: (r) => r.estimatedPayments },
-  { line: "27",  element: "EarnedIncomeCreditAmt",          pick: () => 0 },
-  { line: "28",  element: "AdditionalChildTaxCreditAmt",    pick: () => 0 },
+  { line: "27",  element: "EarnedIncomeCreditAmt",          pick: (r) => r.earnedIncomeCredit },
+  { line: "28",  element: "AdditionalChildTaxCreditAmt",    pick: (r) => r.additionalChildTaxCredit },
   { line: "29",  element: "RefundableAmerOppCreditAmt",     pick: () => 0 },
   { line: "32",  element: "RefundableCreditsAmt",           pick: (r) => r.refundableCredits },
   { line: "33",  element: "TotalPaymentsAmt",               pick: (r) => r.totalPayments },
@@ -110,6 +111,9 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS8959", element: "AddnlMedicareTaxWithholdingAmt", label: "8959 24", pick: (r) => [r.form8959.additionalWithheld] },
   { form: "IRS1040Schedule3", element: "ExcessSocSecAndTier1RRTATaxAmt", label: "Sch 3 11", pick: (r) => [r.schedule3.excessSocialSecurity] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
+  { form: "IRS1040Schedule8812", element: "CTCODCAfterAGILimitAmt", label: "8812 12", pick: (r) => (r.schedule8812.required ? [r.schedule8812.afterPhaseout] : []) },
+  { form: "IRS1040Schedule8812", element: "ACTCBeforeLimitAmt", label: "8812 16a", pick: (r) => (r.schedule8812.required ? [r.schedule8812.partII.line16a] : []) },
+  { form: "IRS1040Schedule8812", element: "NetEarnedIncomeCalculatedAmt", label: "8812 20", pick: (r) => (r.schedule8812.required ? [r.schedule8812.partII.line20] : []) },
 ];
 
 // ── Input walking ─────────────────────────────────────────────────────────────
@@ -189,8 +193,10 @@ const FILING_STATUS: Record<string, FilingStatus> = {
 };
 
 const RELATIONSHIP: Record<string, Dependent["relationship"]> = {
-  son: "Child", daughter: "Child", stepchild: "Child", foster_child: "Child",
-  parent: "Parent", brother: "Sibling", sister: "Sibling",
+  son: "Child", daughter: "Child", stepchild: "Stepchild", stepson: "Stepchild", stepdaughter: "Stepchild",
+  foster_child: "Foster child", grandchild: "Grandchild", grandson: "Grandchild", granddaughter: "Grandchild",
+  niece: "Niece", nephew: "Nephew", brother: "Sibling", sister: "Sibling", half_brother: "Sibling",
+  half_sister: "Sibling", stepbrother: "Sibling", stepsister: "Sibling", parent: "Parent",
 };
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? 0 : Number(v));
@@ -243,20 +249,30 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   const status = FILING_STATUS[String(val(f1040, "filing_status"))];
   if (!status) outOfScope.add(`filing_status=${val(f1040, "filing_status")}`);
 
-  const dependents: Dependent[] = list(f1040, "dependent_detail").map((d) => {
+  // Each listed person with the answers that decide whether they are a dependent at all.
+  const listed = list(f1040, "dependent_detail").map((d) => {
     const rel = String(val(d, "dependent_relationship") ?? "");
-    if (val(d, "dependent_ssn_employment_valid") === false) outOfScope.add("dependent SSN not valid for employment (ODC instead of CTC)");
+    if (rel && !RELATIONSHIP[rel]) outOfScope.add(`dependent relationship "${rel}"`);
     if (val(d, "dependent_ssn_itin_atin") === false) outOfScope.add("dependent without an SSN/ITIN/ATIN");
-    return {
+    const monthsInUs = val(d, "dependent_months_lived_in_us");
+    const dep: Dependent = {
       firstName: String(val(d, "dependent_first_name") ?? ""),
       lastName: String(val(d, "dependent_last_name") ?? ""),
       ssn: String(val(d, "dependent_ssn") ?? ""),
       relationship: RELATIONSHIP[rel] ?? "Other",
       birthYear: Number(String(val(d, "dependent_date_of_birth") ?? "").slice(0, 4)),
-      monthsInHome: num(val(d, "dependent_months_lived")),
-      qualifiesChildTaxCredit: false, // derived from age by tax/household
+      // Residency for a qualifying child counts months in the taxpayer's home in the U.S.
+      monthsInHome: Math.min(num(val(d, "dependent_months_lived")), monthsInUs == null ? 12 : num(monthsInUs)),
+      fullTimeStudent: val(d, "dependent_student_for_5_plus_months") === true,
+      disabled: val(d, "dependent_disabled") === true,
+      ssnValidForEmployment: val(d, "dependent_ssn_employment_valid") !== false,
+      qualifiesChildTaxCredit: false, // derived by tax/household
       qualifiesOtherDependent: false,
     };
+    const citizenOrResident =
+      val(d, "dependent_us_citizen_national_or_resident_alien") === true ||
+      val(d, "dependent_us_citizen_national_resident_alien_or_canada_mexico_resident") === true;
+    return { dep, citizenOrResident, supportedByTp: val(d, "dependent_supported_by_tp") };
   });
 
   const w2Records: W2Record[] = list(rd, "w2").map((w) => {
@@ -385,6 +401,27 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     num(val(f1040, "applied_from_prior_year"));
 
   const married = status === "MFJ" || status === "MFS";
+  // Decide who is a dependent once the taxpayer's own dates are known (qualifying-child age test).
+  const dependents: Dependent[] = [];
+  const probe = { taxYear, filingStatus: status ?? "Single",
+    dateOfBirth: isoToUs(val(f1040, "tp_date_of_birth")), spouseDateOfBirth: isoToUs(val(f1040, "sp_date_of_birth")) } as FakeTaxpayer;
+  for (const { dep, citizenOrResident, supportedByTp } of listed) {
+    // A dependent must be a U.S. citizen, national or resident (or Canada/Mexico resident).
+    if (!citizenOrResident) continue;
+    if (supportedByTp === false) {
+      if (isQualifyingChild(dep, probe)) {
+        // The qualifying-child tests have no "taxpayer provided half the support" test, but
+        // TaxCalcBench drops such a child entirely (single-eic-non-dependent-child), so don't score it.
+        outOfScope.add("qualifying child the taxpayer did not provide half the support for (TaxCalcBench treats as no dependent and no EIC child)");
+      } else {
+        continue; // a qualifying relative must be supported by the taxpayer
+      }
+    }
+    dependents.push(dep);
+  }
+  for (const k of ["tp_dependent", "sp_dependent", "eic_not_allowed", "qualifying_child_of_another"]) {
+    if (val(f1040, k) === true) outOfScope.add(`irs1040.${k}`);
+  }
   const taxpayer: FakeTaxpayer = {
     seed: 0,
     taxYear,

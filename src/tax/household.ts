@@ -16,21 +16,65 @@ export function ageAtYearEnd(birthYear: number, taxYear: number): number {
   return taxYear - birthYear;
 }
 
-/** Under 17 at the end of the tax year → child tax credit; otherwise credit for other dependents. */
-export function qualifiesForChildTaxCredit(dep: Dependent, taxYear: number): boolean {
-  return ageAtYearEnd(dep.birthYear, taxYear) < 17;
+const birthYearOf = (dob: string | null | undefined) => (dob ? Number(dob.split("/")[2]) : NaN);
+
+/** Relationships that can make someone a qualifying child (§ 152(c)(2)). */
+const CHILD_RELATIONSHIPS = new Set<Dependent["relationship"]>([
+  "Child", "Stepchild", "Foster child", "Grandchild", "Sibling", "Niece", "Nephew",
+]);
+
+/**
+ * Qualifying child (§ 152(c)), the test shared by the child tax credit and the
+ * EIC: a qualifying relationship; under 19, or under 24 and a full-time student,
+ * or permanently disabled; younger than the taxpayer (or spouse on a joint
+ * return) unless disabled; and living with the taxpayer in the U.S. more than
+ * half the year. (No support-by-taxpayer test: the child must not have provided
+ * over half of their own support, which the model assumes.)
+ */
+export function isQualifyingChild(dep: Dependent, t: FakeTaxpayer): boolean {
+  if (!CHILD_RELATIONSHIPS.has(dep.relationship)) return false;
+  if (dep.birthYear > t.taxYear) return false; // not yet born in the tax year
+  const age = ageAtYearEnd(dep.birthYear, t.taxYear);
+  const ageOk = dep.disabled || age < 19 || (age < 24 && !!dep.fullTimeStudent);
+  if (!ageOk) return false;
+  if (!dep.disabled) {
+    // Younger than the taxpayer OR the spouse (joint return), i.e. younger than the older of the two.
+    // With only birth years, a same-year birth counts as not younger.
+    const years = [birthYearOf(t.dateOfBirth), t.filingStatus === "MFJ" ? birthYearOf(t.spouseDateOfBirth) : NaN]
+      .filter((y) => Number.isFinite(y));
+    if (years.length && dep.birthYear <= Math.min(...years)) return false;
+  }
+  // A child born during the year who lived with the taxpayer the whole time alive meets the
+  // residency test (the profile's months can't tell a newborn's months apart, so trust the birth year).
+  return dep.monthsInHome > 6 || dep.birthYear === t.taxYear;
 }
 
-export function qualifiesForOtherDependentCredit(dep: Dependent, taxYear: number): boolean {
-  return !qualifiesForChildTaxCredit(dep, taxYear);
+/** Child tax credit: a qualifying child under 17 with an SSN valid for employment (§ 24(c), (h)(7)). */
+export function qualifiesForChildTaxCredit(dep: Dependent, t: FakeTaxpayer): boolean {
+  return isQualifyingChild(dep, t) && ageAtYearEnd(dep.birthYear, t.taxYear) < 17 && dep.ssnValidForEmployment !== false;
+}
+
+/** Every other dependent on the return gets the $500 credit for other dependents. */
+export function qualifiesForOtherDependentCredit(dep: Dependent, t: FakeTaxpayer): boolean {
+  if (dep.birthYear > t.taxYear) return false; // listed but not yet born: no credit at all
+  return !qualifiesForChildTaxCredit(dep, t);
+}
+
+/** EIC qualifying child: qualifying child with an SSN valid for employment (§ 32(c)(3)(D), (m)). */
+export function qualifiesForEic(dep: Dependent, t: FakeTaxpayer): boolean {
+  return isQualifyingChild(dep, t) && dep.ssnValidForEmployment !== false;
 }
 
 export function childTaxCreditCount(t: FakeTaxpayer): number {
-  return t.dependents.filter((d) => qualifiesForChildTaxCredit(d, t.taxYear)).length;
+  return t.dependents.filter((d) => qualifiesForChildTaxCredit(d, t)).length;
 }
 
 export function otherDependentCount(t: FakeTaxpayer): number {
-  return t.dependents.filter((d) => qualifiesForOtherDependentCredit(d, t.taxYear)).length;
+  return t.dependents.filter((d) => qualifiesForOtherDependentCredit(d, t)).length;
+}
+
+export function eicChildren(t: FakeTaxpayer): Dependent[] {
+  return t.dependents.filter((d) => qualifiesForEic(d, t));
 }
 
 /**

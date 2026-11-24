@@ -8,9 +8,16 @@ export interface Dependent {
   firstName: string;
   lastName: string;
   ssn: string;
-  relationship: "Child" | "Parent" | "Sibling" | "Other";
+  relationship: "Child" | "Stepchild" | "Foster child" | "Grandchild" | "Sibling" | "Niece" | "Nephew" | "Parent" | "Other";
   birthYear: number;
+  /** Months the dependent lived with the taxpayer in the U.S. */
   monthsInHome: number;
+  /** Full-time student for some part of 5 months (qualifying child up to age 23). */
+  fullTimeStudent?: boolean;
+  /** Permanently and totally disabled (qualifying child at any age). */
+  disabled?: boolean;
+  /** SSN valid for employment, issued by the return due date. Omitted = valid. Needed for CTC and EIC. */
+  ssnValidForEmployment?: boolean;
   qualifiesChildTaxCredit: boolean;
   qualifiesOtherDependent: boolean;
 }

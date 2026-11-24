@@ -12,7 +12,9 @@ import { FilingStatus } from "../faker/taxpayer";
  *         Rev. Proc. 2024-40 / IRS Topic 551 for the additional standard deduction.
  *   Standard deduction: printed on each year's Form 1040 (line 12 / 12e sidebar).
  *   Social Security wage base: SSA contribution and benefit base.
- *   EIC income / investment-income limits: IRS "Earned income and EITC tables" page.
+ *   EIC (all parameters) and investment-income limit: Rev. Proc. 2022-38 / 2023-34 / 2024-40 § 3.06
+ *         (also the IRS "Earned income and EITC tables" page); credit and phase-out percentages § 32(b)(1).
+ *   Refundable child tax credit per child: same Rev. Procs § 3.05 ($1,600 / $1,700 / $1,700).
  *   QBI threshold (§ 199A(e)(2)): Rev. Proc. 2022-38 § 3.27, 2023-34 § 3.27, 2024-40 § 3.27.
  *   Standard mileage rate: Notice 2023-03 (65.5¢), Notice 2024-08 (67¢), Notice 2025-5 (70¢).
  *   Saver's credit AGI limits: Form 8880 instructions for each year.
@@ -32,11 +34,16 @@ interface YearConstants {
   capitalGainsZeroMax: StatusTable<number>;
   capitalGainsFifteenMax: StatusTable<number>;
   childTaxCreditPerChild: number;
-  /** Refundable portion cap per child (§ 24(d)(1)(A)); used only to flag ACTC cases. */
+  /** Refundable portion cap per child (§ 24(d)(1)(A)): Schedule 8812 line 16b. */
   additionalChildTaxCreditPerChild: number;
   ssWageBase: number;
-  /** EIC: earned income and AGI must be LESS than these, by qualifying children 0/1/2/3+. */
+  /** EIC: earned income and AGI must be LESS than these (completed phase-out), by qualifying children 0/1/2/3+. */
   eicIncomeLimit: { mfj: number[]; other: number[] };
+  /** EIC earned income amount (where the maximum credit is reached), by children 0/1/2/3+. */
+  eicEarnedIncomeAmount: number[];
+  eicMaxCredit: number[];
+  /** EIC threshold phase-out amount, by children 0/1/2/3+. */
+  eicPhaseoutStart: { mfj: number[]; other: number[] };
   /** EIC: investment income must be at or under this. */
   eicInvestmentIncomeLimit: number;
   /** § 199A threshold amount: at or under it, Form 8995 (no W-2 wage / UBIA / SSTB limits). */
@@ -67,6 +74,9 @@ const YEARS: Record<number, YearConstants> = {
     additionalChildTaxCreditPerChild: 1600,
     ssWageBase: 160200,
     eicIncomeLimit: { other: [17640, 46560, 52918, 56838], mfj: [24210, 53120, 59478, 63398] },
+    eicEarnedIncomeAmount: [7840, 11750, 16510, 16510],
+    eicMaxCredit: [600, 3995, 6604, 7430],
+    eicPhaseoutStart: { other: [9800, 21560, 21560, 21560], mfj: [16370, 28120, 28120, 28120] },
     eicInvestmentIncomeLimit: 11000,
     qbiThreshold: { joint: 364200, other: 182100 },
     standardMileageRate: 0.655,
@@ -88,6 +98,9 @@ const YEARS: Record<number, YearConstants> = {
     additionalChildTaxCreditPerChild: 1700,
     ssWageBase: 168600,
     eicIncomeLimit: { other: [18591, 49084, 55768, 59899], mfj: [25511, 56004, 62688, 66819] },
+    eicEarnedIncomeAmount: [8260, 12390, 17400, 17400],
+    eicMaxCredit: [632, 4213, 6960, 7830],
+    eicPhaseoutStart: { other: [10330, 22720, 22720, 22720], mfj: [17250, 29640, 29640, 29640] },
     eicInvestmentIncomeLimit: 11600,
     qbiThreshold: { joint: 383900, other: 191950 },
     standardMileageRate: 0.67,
@@ -109,6 +122,9 @@ const YEARS: Record<number, YearConstants> = {
     additionalChildTaxCreditPerChild: 1700,
     ssWageBase: 176100,
     eicIncomeLimit: { other: [19104, 50434, 57310, 61555], mfj: [26214, 57554, 64430, 68675] },
+    eicEarnedIncomeAmount: [8490, 12730, 17880, 17880],
+    eicMaxCredit: [649, 4328, 7152, 8046],
+    eicPhaseoutStart: { other: [10620, 23350, 23350, 23350], mfj: [17730, 30470, 30470, 30470] },
     eicInvestmentIncomeLimit: 11950,
     qbiThreshold: { joint: 394600, other: 197300 },
     standardMileageRate: 0.70,
@@ -131,6 +147,12 @@ export const MEDICARE_EMPLOYEE_RATE = 0.0145;
 export const ADDITIONAL_MEDICARE = { rate: 0.009, threshold: { mfj: 250000, mfs: 125000, other: 200000 }, withholdingThreshold: 200000 };
 /** Net investment income tax (§ 1411, Form 8960): 3.8% over these (not indexed). QSS uses the joint amount. */
 export const NIIT = { rate: 0.038, threshold: { joint: 250000, mfs: 125000, other: 200000 } };
+/** § 32(b)(1) credit and phase-out percentages, by qualifying children 0/1/2/3+. */
+export const EIC_CREDIT_RATE = [0.0765, 0.34, 0.40, 0.45];
+export const EIC_PHASEOUT_RATE = [0.0765, 0.1598, 0.2106, 0.2106];
+/** Schedule 8812 line 19/20: 15% of earned income over $2,500 (§ 24(d)(1)(B)). */
+export const ACTC_EARNED_INCOME_FLOOR = 2500;
+export const ACTC_EARNED_INCOME_RATE = 0.15;
 export const EDUCATOR_EXPENSE_LIMIT = 300;
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
 /** § 199A deduction rate. */

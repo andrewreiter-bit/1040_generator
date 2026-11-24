@@ -25,7 +25,8 @@ import {
   taxOnIncome,
   yearConstants,
 } from "../config/tax-year";
-import { ageAtYearEnd, childTaxCreditCount, includedW2s, is65OrOlder, otherDependentCount } from "./household";
+import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount } from "./household";
+import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
 import {
   BusinessDeductions, Form8995Lines, ScheduleCLines, ScheduleSELines,
   businessDeductions, form8995, includedScheduleCs, scheduleC, scheduleSE,
@@ -92,8 +93,10 @@ export interface ReturnLines {
   otherWithholding: number;    // 25c (Form 8959 line 24)
   totalWithholding: number;    // 25d
   estimatedPayments: number;   // 26
+  earnedIncomeCredit: number;  // 27 (2025: 27a)
+  additionalChildTaxCredit: number; // 28
   scheduleThreePayments: number; // 31
-  refundableCredits: number;   // 32 (27 + 28 + 29 + 31; EIC/ACTC/AOTC are 0 or unsupported)
+  refundableCredits: number;   // 32 (27 + 28 + 29 + 31; AOTC not modelled)
   totalPayments: number;       // 33
   overpaid: number;            // 34
   refund: number;              // 35a
@@ -107,6 +110,14 @@ export interface ReturnLines {
   form8959: Form8959Lines;
   form8960: Form8960Lines;
   form8995?: Form8995Lines;
+  /** Schedule 8812 Part I (lines 4–14). */
+  schedule8812: {
+    ctcChildren: number; otherDependents: number; maxCredit: number; threshold: number;
+    reduction: number; afterPhaseout: number; taxLimit: number; credit: number;
+    partII: Schedule8812PartII;
+    required: boolean;
+  };
+  eic: EicLines;
   unsupported: string[];
 }
 
@@ -133,30 +144,6 @@ function qdcgTax(taxable: number, qualDiv: number, netCapGain: number, t: FakeTa
   const l23 = R(l18 + l21 + l22);
   const l24 = R(taxOnIncome(l1, t.taxYear, t.filingStatus));
   return Math.min(l23, l24);
-}
-
-/**
- * True when the household certainly gets no earned income credit, so line 27 is 0.
- * Conservative: qualifying children are over-counted (any dependent under 24 who
- * lived with the taxpayer more than half the year), which only raises the income
- * limit; anything not provably zero is reported as unsupported by the caller.
- */
-function eicIsZero(t: FakeTaxpayer, earnedIncome: number, agi: number, investmentIncome: number): boolean {
-  const c = yearConstants(t.taxYear);
-  if (earnedIncome <= 0) return true;
-  if (investmentIncome > c.eicInvestmentIncomeLimit) return true;
-  const possibleChildren = Math.min(3, t.dependents.filter(
-    (d) => ageAtYearEnd(d.birthYear, t.taxYear) < 24 && d.monthsInHome > 6
-  ).length);
-  const limit = (t.filingStatus === "MFJ" ? c.eicIncomeLimit.mfj : c.eicIncomeLimit.other)[possibleChildren];
-  if (earnedIncome >= limit || agi >= limit) return true;
-  if (possibleChildren === 0) {
-    // Without a qualifying child, the taxpayer or spouse must be 25–64 at year end.
-    const age = (dob: string | null | undefined) => (dob ? ageAtYearEnd(Number(dob.split("/")[2]), t.taxYear) : -1);
-    const inRange = (a: number) => a >= 25 && a <= 64;
-    if (!inRange(age(t.dateOfBirth)) && !(t.filingStatus === "MFJ" && inRange(age(t.spouseDateOfBirth)))) return true;
-  }
-  return false;
 }
 
 const memo = new WeakMap<FakeTaxpayer, ReturnLines>();
@@ -267,9 +254,6 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const reduction = agi > threshold ? Math.ceil((agi - threshold) / 1000) * 50 : 0;
   const creditAfterPhaseout = Math.max(0, maxCredit - reduction);
   const childAndOtherDependentCredit = Math.min(creditAfterPhaseout, taxBeforeCredits);
-  if (nCtc > 0 && creditAfterPhaseout > taxBeforeCredits) {
-    unsupported.push("additional child tax credit (Schedule 8812 Part II, line 28)");
-  }
   const scheduleThreeCredits = 0;
   const totalCredits = round2(childAndOtherDependentCredit + scheduleThreeCredits);
   const taxAfterCredits = Math.max(0, round2(taxBeforeCredits - totalCredits));
@@ -296,15 +280,37 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const otherWithholding = f8959.additionalWithheld;
   const totalWithholding = round2(w2Withholding + form1099Withholding + otherWithholding);
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
-  // EIC earned income: wages plus net self-employment earnings (Schedule SE line 3 less line 13).
-  const seEarned = sum(scheduleSEs.map((s) => s.combined - s.deduction));
-  if (!eicIsZero(t, round2(wages + seEarned), agi, taxableInterest + ordinaryDividends + Math.max(0, capitalGain))) {
-    unsupported.push("earned income credit (line 27) — household may qualify");
-  }
   const excessSs = excessSocialSecurity(t, w2s, R).total;
   const schedule3: Schedule3Lines = { excessSocialSecurity: excessSs, otherPayments: excessSs, required: excessSs > 0 };
   const scheduleThreePayments = schedule3.otherPayments;
-  const refundableCredits = scheduleThreePayments;
+
+  // ── Earned income credit (line 27) ────────────────────────────────────────
+  // Earned income (EIC Worksheet B / Schedule 8812 earned income worksheet): wages plus
+  // net self-employment earnings, i.e. Schedule SE line 3 less the line 13 deduction.
+  const seEarned = sum(scheduleSEs.map((s) => s.combined - s.deduction));
+  const earnedIncome = round2(wages + seEarned);
+  const nEic = eicChildren(t).length;
+  const investmentIncome = round2(taxableInterest + ordinaryDividends + Math.max(0, capitalGain));
+  let eic = earnedIncomeCredit(t, nEic, earnedIncome, agi, investmentIncome);
+  if (t.filingStatus === "MFS" && nEic > 0) {
+    // A separate return gets EIC only under the separated-spouse rule (§ 32(d)(2)), which the
+    // model can't decide. No credit is claimed; it's flagged only when the rule would matter.
+    if (eic.credit > 0) unsupported.push("EIC on a separate return with a qualifying child (separated-spouse rule, § 32(d)(2))");
+    eic = { ...eic, fromEarnedIncome: 0, fromAgi: null, credit: 0, reasonNone: "married filing separately (separated-spouse rule not modelled)" };
+  }
+
+  // ── Additional child tax credit (line 28, Schedule 8812 Part II) ─────────
+  const partII = additionalChildTaxCredit({
+    t, R, ctcChildren: nCtc, line12: creditAfterPhaseout, line14: childAndOtherDependentCredit, earnedIncome,
+    socialSecurityMedicareWithheld: sum(w2s.flatMap((w) => [w.ssWithheld, w.medicareWithheld])),
+    seTaxDeduction: seTaxDeduction, eic: eic.credit, excessSocialSecurity: excessSs,
+  });
+  const schedule8812 = {
+    ctcChildren: nCtc, otherDependents: nOdc, maxCredit, threshold, reduction, afterPhaseout: creditAfterPhaseout,
+    taxLimit: taxBeforeCredits, credit: childAndOtherDependentCredit, partII,
+    required: maxCredit > 0,
+  };
+  const refundableCredits = round2(eic.credit + partII.credit + scheduleThreePayments);
   const totalPayments = round2(totalWithholding + estimatedPayments + refundableCredits);
 
   const overpaid = Math.max(0, round2(totalPayments - totalTax));
@@ -317,9 +323,11 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
+    earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit,
     scheduleThreePayments, refundableCredits, totalPayments, overpaid, refund: overpaid, amountOwed,
     scheduleC: scheduleCs, scheduleSE: scheduleSEs, businessDeductions: bizDed,
     schedule1, schedule2, schedule3, form8959: f8959, form8960: f8960, form8995: qbi,
+    schedule8812, eic,
     unsupported,
   };
   memo.set(t, result);

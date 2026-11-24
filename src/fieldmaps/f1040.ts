@@ -92,6 +92,8 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   line25c:          (t) => moneyOrBlank(r(t).otherWithholding),
   line31:           (t) => moneyOrBlank(r(t).scheduleThreePayments),
   line26:           (t) => moneyOrBlank(r(t).estimatedPayments),
+  line27:           (t) => moneyOrBlank(r(t).earnedIncomeCredit),
+  line28:           (t) => moneyOrBlank(r(t).additionalChildTaxCredit),
   line35a:          (t) => moneyOrBlank(r(t).refund),
   line37:           (t) => moneyOrBlank(r(t).amountOwed),
   // Direct deposit only when there is a refund to deposit.
@@ -148,13 +150,13 @@ function buildMap(taxYear: number, layout: Layout1040): FieldMap {
     if (slot.last)  add(slot.last,  `${k}.last`,  (t) => dep(t)?.lastName ?? BLANK);
     add(slot.ssn,          `${k}.ssn`,          (t) => dep(t)?.ssn ?? BLANK);
     add(slot.relationship, `${k}.relationship`, (t) => dep(t)?.relationship ?? BLANK);
-    add(slot.ctc,          `${k}.ctc`,          (t) => checkIf(!!dep(t) && qualifiesForChildTaxCredit(dep(t), t.taxYear)));
-    add(slot.odc,          `${k}.odc`,          (t) => checkIf(!!dep(t) && qualifiesForOtherDependentCredit(dep(t), t.taxYear)));
+    add(slot.ctc,          `${k}.ctc`,          (t) => checkIf(!!dep(t) && qualifiesForChildTaxCredit(dep(t), t)));
+    add(slot.odc,          `${k}.odc`,          (t) => checkIf(!!dep(t) && qualifiesForOtherDependentCredit(dep(t), t)));
     const livedHalfYear = (t: FakeTaxpayer) => checkIf(!!dep(t) && dep(t).monthsInHome > 6);
     if (slot.livedWithYou) add(slot.livedWithYou, `${k}.livedWithYou`, livedHalfYear);
     if (slot.livedInUS)    add(slot.livedInUS,    `${k}.livedInUS`,    livedHalfYear);
-    if (slot.student)      add(slot.student,      `${k}.student`,  () => OFF);
-    if (slot.disabled)     add(slot.disabled,     `${k}.disabled`, () => OFF);
+    if (slot.student)      add(slot.student,      `${k}.student`,  (t) => checkIf(!!dep(t)?.fullTimeStudent));
+    if (slot.disabled)     add(slot.disabled,     `${k}.disabled`, (t) => checkIf(!!dep(t)?.disabled));
   });
   for (const [key, name] of Object.entries(layout.computed)) add(name, key);
 
@@ -177,6 +179,8 @@ const PAGE2_2023_2024 = {
     line25b: `${P2}f2_12[0]`,
     line25c: `${P2}f2_13[0]`,
     line26: `${P2}f2_15[0]`,
+    line27: `${P2}f2_16[0]`,
+    line28: `${P2}f2_17[0]`,
     line31: `${P2}f2_20[0]`,
     line35a: `${P2}f2_24[0]`,
     line37: `${P2}f2_28[0]`,
@@ -373,6 +377,8 @@ const LAYOUT_2025: Layout1040 = {
     line25b: `${P2}f2_18[0]`,
     line25c: `${P2}f2_19[0]`,
     line26: `${P2}f2_21[0]`,
+    line27: `${P2}f2_23[0]`,   // 27a
+    line28: `${P2}f2_24[0]`,
     line31: `${P2}f2_27[0]`,
     line35a: `${P2}f2_31[0]`,
     line37: `${P2}f2_35[0]`,

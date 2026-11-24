@@ -46,6 +46,9 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.form8995 && !r.form8995.overThreshold) out.push("f8995");
   if (r.form8959.required) out.push("f8959");
   if (r.form8960.tax > 0) out.push("f8960");
+  // Schedule 8812 backs line 19 and line 28; Schedule EIC lists the children behind line 27.
+  if (r.schedule8812.required) out.push("f1040s8");
+  if (r.earnedIncomeCredit > 0 && r.eic.qualifyingChildren > 0) out.push("f1040sei");
   return out;
 }
 
