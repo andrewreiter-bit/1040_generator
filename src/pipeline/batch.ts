@@ -3,7 +3,7 @@ import { runForm } from "./runner";
 import { createTaxpayer } from "../faker/factory";
 import { FillResult } from "../filler/index";
 import { FORM_REGISTRY, FormEntry, getForm } from "../registry/forms";
-import { documentsFor } from "../tax/documents";
+import { documentsFor, scheduleGaps } from "../tax/documents";
 
 /** A form with an optional per-form submission count override. */
 export interface FormSpec {
@@ -45,6 +45,8 @@ export interface BatchResult {
   errors: Array<{ formId: string; submission: number; error: string }>;
   /** Forms with no document for a household (e.g. 1099-INT when it has no interest payers). */
   noDocuments: Array<{ formId: string; submission: number }>;
+  /** Schedules the return needs but that have no field map for its tax year (wrong-year PDF). */
+  missingSchedules: Array<{ formId: string; submission: number; taxYear: number }>;
 }
 
 /** Normalise the `forms` / `formIds` option into a list of FormSpecs. */
@@ -78,6 +80,7 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
   const results: BatchResult["results"] = [];
   const errors:  BatchResult["errors"]  = [];
   const noDocuments: BatchResult["noDocuments"] = [];
+  const missingSchedules: BatchResult["missingSchedules"] = [];
 
   // Pre-generate a pool of taxpayers large enough for the largest per-form count
   const maxCount = Math.max(globalCount, ...formSpecs.map((s) => s.count ?? globalCount));
@@ -103,7 +106,11 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
       const { index, taxpayer } = taxpayers[i];
       const docs = documentsFor(form.id, taxpayer);
       if (docs.length === 0) {
-        noDocuments.push({ formId: form.id, submission: index });
+        if (scheduleGaps(taxpayer).includes(form.id)) {
+          missingSchedules.push({ formId: form.id, submission: index, taxYear: taxpayer.taxYear });
+        } else {
+          noDocuments.push({ formId: form.id, submission: index });
+        }
         continue;
       }
       for (const doc of docs) {
@@ -144,6 +151,7 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
     results,
     errors,
     noDocuments,
+    missingSchedules,
   };
 }
 

@@ -29,10 +29,15 @@ import { deductionAmount } from "../src/fieldmaps/f1040";
 import { w4ChildrenAmount, w4OtherDependentsAmount } from "../src/fieldmaps/fw4";
 import { scheduleBDividendTotal, scheduleBInterestTotal } from "../src/fieldmaps/f1040sb";
 import { computeReturn } from "../src/tax/compute";
-import { documentsFor } from "../src/tax/documents";
+import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
+import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 
-const COMMON_FORMS = ["f1040", "fw2", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1099int", "f1099div", "fw4"];
+const COMMON_FORMS = [
+  "f1040", "f1040s1", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
+  "f8959", "f8960",
+  "fw2", "f1099int", "f1099div", "fw4",
+];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
 const program = new Command();
@@ -223,7 +228,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   eq(1, "1040-12-deduction", k("line12"), deductionAmount(t));
 
   // Arithmetic chain
-  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line7")));
+  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line7")) + n0(k("line8")));
   eq(1, "1040-15-taxable-income", k("line15"), Math.max(0, n0(k("line11")) - n0(k("line14"))));
 
   // Refund / amount owed are mutually exclusive
@@ -237,10 +242,12 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   const expectedLine7 = t.capitalGains != null || capitalDividends !== 0 ? r.capitalGain : 0;
   eq(2, "1040-7-capital-gain", k("line7"), expectedLine7);
   const lineChecks: Array<[string, string, number]> = [
-    ["9", "line9", r.totalIncome], ["11", "line11", r.agi], ["14", "line14", r.totalDeductions],
+    ["8", "line8", r.additionalIncome], ["9", "line9", r.totalIncome], ["10", "line10", r.adjustments],
+    ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["14", "line14", r.totalDeductions],
     ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
-    ["19", "line19", r.childAndOtherDependentCredit], ["22", "line22", r.taxAfterCredits],
-    ["24", "line24", r.totalTax], ["25d", "line25d", r.totalWithholding], ["33", "line33", r.totalPayments],
+    ["19", "line19", r.childAndOtherDependentCredit], ["22", "line22", r.taxAfterCredits], ["23", "line23", r.otherTaxes],
+    ["24", "line24", r.totalTax], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
+    ["31", "line31", r.scheduleThreePayments], ["32", "line32", r.refundableCredits], ["33", "line33", r.totalPayments],
     ["34", "line34", r.overpaid], ["35a", "line35a", r.refund], ["37", "line37", r.amountOwed],
   ];
   const mismatched = lineChecks
@@ -356,13 +363,85 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 2, id: "schB-payer-rows", ok: !rowProblems.length, detail: rowProblems.join(", ") || undefined });
   }
 
+  // ── Schedules 1/2/3, C, SE, 8995 ───────────────────────────────────────────
+  const r = computeReturn(t);
+  const gaps = scheduleGaps(t);
+  checks.push({
+    phase: 2, id: "needed-schedules-have-year-maps", ok: !gaps.length,
+    detail: gaps.length ? `${gaps.join(", ")}: no ${t.taxYear} field map (forms_${t.taxYear}/ holds another year's PDF)` : undefined,
+  });
+  const keyed = (run: FormRun | undefined, formId: string) => {
+    const m = getFieldMap(formId, t.taxYear);
+    return (key: string) => (run && m ? byKey(run, m, key) : undefined);
+  };
+  const tie = (phase: number, id: string, a: number, b: number, what: string) =>
+    checks.push({ phase, id, ok: near(a, round2(b)), detail: `${what}: ${money(a)} vs ${money(b)}` });
+
+  const cDocs = docs.f1040sc ?? [];
+  if (r.scheduleC.length) {
+    checks.push({ phase: 2, id: "schC-one-per-business", ok: cDocs.length === r.scheduleC.length, detail: `${cDocs.length} Schedule C(s), return has ${r.scheduleC.length} business(es)` });
+    const arith: string[] = [];
+    cDocs.forEach((run, i) => {
+      const c = keyed(run, "f1040sc");
+      const L = (x: string) => n0(c(`line${x}`));
+      const expenses = round2([...EXPENSE_LINES.map(([l]) => l), "9", "24b"].reduce((s, l) => s + L(l), 0));
+      const bad = [
+        !near(L("3"), round2(L("1") - L("2"))) && "3", !near(L("5"), round2(L("3") - L("4"))) && "5",
+        !near(L("7"), round2(L("5") + L("6"))) && "7", !near(L("28"), expenses) && "28",
+        !near(L("29"), round2(L("7") - L("28"))) && "29", !near(L("31"), round2(L("29") - L("30"))) && "31",
+        !near(L("48"), L("27a")) && "48",
+        digits(c("ssn")) !== digits(r.scheduleC[i]?.owner === "spouse" ? t.spouseSSN ?? "" : t.ssn) && "ssn",
+      ].filter(Boolean);
+      if (bad.length) arith.push(`${run.label} line(s) ${bad.join(", ")}`);
+    });
+    checks.push({ phase: 2, id: "schC-lines-tie-out", ok: !arith.length, detail: arith.join("; ") || undefined });
+    const total31 = sumBy(cDocs, (run) => keyed(run, "f1040sc")("line31"));
+    tie(2, "schC-31-total-equals-sch1-3", total31, r.schedule1.businessIncome, "Σ Sch C 31 vs Schedule 1 line 3");
+    // The profile drew a net figure first; its Schedule C detail must add back up to it.
+    if (t.businessIncome != null) tie(2, "schC-31-equals-profile-net", total31, t.businessIncome, "Σ Sch C 31 vs profile businessIncome");
+  }
+
+  const seDocs = docs.f1040sse ?? [];
+  const seNeeded = r.scheduleSE.filter((x) => !x.belowMinimum);
+  if (seNeeded.length || seDocs.length) {
+    checks.push({ phase: 2, id: "schSE-one-per-person", ok: seDocs.length === seNeeded.length, detail: `${seDocs.length} Schedule SE(s), ${seNeeded.length} person(s) owe SE tax` });
+    tie(2, "schSE-12-total-equals-sch2-4", sumBy(seDocs, (run) => keyed(run, "f1040sse")("line12")), r.schedule2.seTax, "Σ SE 12 vs Schedule 2 line 4");
+    tie(2, "schSE-13-total-equals-sch1-15", sumBy(seDocs, (run) => keyed(run, "f1040sse")("line13")), r.schedule1.seTaxDeduction, "Σ SE 13 vs Schedule 1 line 15");
+  }
+
+  const s1 = keyed(docs.f1040s1?.[0], "f1040s1");
+  if (docs.f1040s1?.length) {
+    tie(2, "sch1-10-equals-1040-8", n0(s1("line10")), n0(line("line8")), "Schedule 1 line 10 vs 1040 line 8");
+    tie(2, "sch1-26-equals-1040-10", n0(s1("line26")), n0(line("line10")), "Schedule 1 line 26 vs 1040 line 10");
+    tie(2, "sch1-3-equals-schC-total", n0(s1("line3")), r.schedule1.businessIncome, "Schedule 1 line 3 vs Σ Sch C 31");
+  }
+  const s2 = keyed(docs.f1040s2?.[0], "f1040s2");
+  if (docs.f1040s2?.length) tie(2, "sch2-21-equals-1040-23", n0(s2("line21")), n0(line("line23")), "Schedule 2 line 21 vs 1040 line 23");
+  const s3 = keyed(docs.f1040s3?.[0], "f1040s3");
+  if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
+  const m59 = keyed(docs.f8959?.[0], "f8959");
+  if (docs.f8959?.length) {
+    tie(2, "8959-18-equals-sch2-11", n0(m59("line18")), n0(s2("line11")), "Form 8959 line 18 vs Schedule 2 line 11");
+    tie(2, "8959-24-equals-1040-25c", n0(m59("line24")), n0(line("line25c")), "Form 8959 line 24 vs 1040 line 25c");
+  }
+  const m60 = keyed(docs.f8960?.[0], "f8960");
+  if (docs.f8960?.length) tie(2, "8960-17-equals-sch2-12", n0(m60("line17")), n0(s2("line12")), "Form 8960 line 17 vs Schedule 2 line 12");
+  const q = keyed(docs.f8995?.[0], "f8995");
+  if (docs.f8995?.length) {
+    tie(2, "8995-15-equals-1040-13", n0(q("line15")), n0(line("line13")), "Form 8995 line 15 vs 1040 line 13");
+    checks.push({ phase: 2, id: "8995-businesses-fit", ok: r.scheduleC.length <= 5, detail: `${r.scheduleC.length} business(es); Form 8995 has 5 rows` });
+  }
+
   // ── Form selection (Phase 3): only include schedules the household needs ──
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
+  const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
     ["f1040sa", !t.takesStandardDeduction],
-    ["f1040sc", t.businessIncome != null],
     ["f1040sd", t.capitalGains != null],
     ["f1040se", t.rentalIncome != null],
+    ...["f1040s1", "f1040s2", "f1040s3", "f1040sc", "f1040sse", "f8995", "f8959", "f8960"]
+      .filter((id) => !gaps.includes(id))
+      .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];
   const wrong = needs.filter(([id, need]) => included(id) !== need).map(([id, need]) => `${id} ${need ? "missing" : "not needed"}`);
   checks.push({ phase: 3, id: "form-set-matches-household", ok: !wrong.length, detail: wrong.join(", ") || undefined });

@@ -8,6 +8,7 @@ import {
   FilingStatus,
 } from "./taxpayer";
 import { ssWageBase } from "./tax-year";
+import { buildScheduleC } from "./schedule-c";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -170,7 +171,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
 
   const takesStandard = faker.datatype.boolean({ probability: 0.87 });
 
-  return {
+  const taxpayer: FakeTaxpayer = {
     seed: resolvedSeed,
     taxYear,
     firstName,
@@ -212,6 +213,12 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
       ? `P${faker.string.numeric(8)}`
       : null,
   };
+  // Schedule C detail behind the drawn net figure. These draws come after every
+  // existing draw so a given seed still produces the same household.
+  if (taxpayer.businessIncome != null) {
+    taxpayer.scheduleCs = [buildScheduleC(faker, taxpayer.businessIncome, taxYear)];
+  }
+  return taxpayer;
 }
 
 function age(dob: string): number {

@@ -19,7 +19,9 @@ import chalk from "chalk";
 import fs from "fs-extra";
 import path from "path";
 import { computeReturn } from "../src/tax/compute";
-import { KNOWN_BAD_CASES, SCORED_LINES, expectedAmount, loadTy24Cases, toTaxpayer } from "../src/answerkey/taxcalcbench";
+import {
+  DETAIL_LINES, KNOWN_BAD_CASES, SCORED_LINES, expectedAmount, expectedAmounts, loadTy24Cases, toTaxpayer,
+} from "../src/answerkey/taxcalcbench";
 
 const program = new Command();
 program
@@ -47,9 +49,10 @@ interface CaseResult {
   const results: CaseResult[] = [];
 
   for (const c of cases) {
-    const { taxpayer, outOfScope } = toTaxpayer(c.input, 2024);
+    const { taxpayer, outOfScope, postChecks } = toTaxpayer(c.input, 2024);
     const r = taxpayer ? computeReturn(taxpayer) : undefined;
-    const reasons = [...outOfScope, ...(r?.unsupported ?? [])];
+    const post = r ? postChecks.map((f) => f(r)).filter((x): x is string => !!x) : [];
+    const reasons = [...outOfScope, ...post, ...(r?.unsupported ?? [])];
     const lines = r
       ? SCORED_LINES.map((s) => {
           const expected = expectedAmount(c.expectedXml, s.element);
@@ -78,6 +81,18 @@ interface CaseResult {
         console.log(color(`    line ${l.line.padEnd(4)} expected ${String(l.expected).padStart(9)}  got ${String(l.actual).padStart(9)}  (${l.diff >= 0 ? "+" : ""}${l.diff})`));
       }
     }
+    // Supporting forms: where a 1040 difference starts (shown for mismatches, and with --verbose).
+    if (r && (status === "fail" || status === "lenient" || (opts.verbose && status !== "known-bad"))) {
+      for (const d of DETAIL_LINES) {
+        const exp = expectedAmounts(c.expectedXml, d.form, d.element);
+        const got = d.pick(r).map((x) => Math.round(x + 1e-6));
+        if (!exp.length && got.every((x) => x === 0)) continue;
+        const same = exp.length === got.length && exp.every((e, i) => e === got[i]);
+        if (same && !opts.verbose) continue;
+        const color = same ? chalk.gray : chalk.red;
+        console.log(color(`    ${d.label.padEnd(9)} expected [${exp.join(", ")}]  got [${got.join(", ")}]`));
+      }
+    }
   }
 
   const count = (s: CaseResult["status"]) => results.filter((r) => r.status === s).length;
@@ -91,7 +106,10 @@ interface CaseResult {
   // What would bring the most cases into scope
   const blockers = new Map<string, number>();
   for (const r of results.filter((x) => x.status === "out-of-scope")) {
-    const seen = new Set(r.reasons.map((x) => x.replace(/\[\]\.[^.]+$/, "[]").replace(/^(\w+)\..*$/, "$1")));
+    // Group input paths by form ("irs1040_schedulec[]"), but keep 1040 questions individually
+    // ("irs1040.tp_blind") since each is a separate feature.
+    const seen = new Set(r.reasons.map((x) =>
+      /^irs1040\./.test(x) ? x.replace(/\[\]\.[^.]+$/, "[]") : x.replace(/\[\]\.[^.]+$/, "[]").replace(/^(\w+)\..*$/, "$1")));
     seen.forEach((b) => blockers.set(b, (blockers.get(b) ?? 0) + 1));
   }
   console.log(chalk.bold("\nMost common reasons a case is out of scope:"));

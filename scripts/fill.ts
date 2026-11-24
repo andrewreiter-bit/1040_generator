@@ -52,6 +52,11 @@ const opts = program.opts();
     const ids = [...new Set(result.noDocuments.map((n) => n.formId))].join(", ");
     console.log(chalk.gray(`  – no document needed for: ${ids} (household has no matching records)`));
   }
+  if (result.missingSchedules.length > 0) {
+    const ids = [...new Set(result.missingSchedules.map((n) => n.formId))].join(", ");
+    const year = result.missingSchedules[0].taxYear;
+    console.log(chalk.yellow(`  ! NOT INCLUDED but the return needs: ${ids} — no ${year} field map (forms_${year}/ holds another year's PDF). The 1040 totals still include them.`));
+  }
   if (result.totalFailed > 0) {
     console.log(chalk.red(`  ✗ ${result.totalFailed} failed`));
     result.errors.forEach((e) =>

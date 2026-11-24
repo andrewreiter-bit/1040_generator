@@ -14,8 +14,9 @@
  */
 import fs from "fs";
 import path from "path";
-import { Dependent, FakeTaxpayer, FilingStatus, W2Record } from "../faker/taxpayer";
+import { Dependent, FakeTaxpayer, FilingStatus, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
+import { saversCreditAgiLimit } from "../config/tax-year";
 
 type Json = unknown;
 
@@ -48,7 +49,7 @@ export const SCORED_LINES: ScoredLine[] = [
   { line: "27",  element: "EarnedIncomeCreditAmt",          pick: () => 0 },
   { line: "28",  element: "AdditionalChildTaxCreditAmt",    pick: () => 0 },
   { line: "29",  element: "RefundableAmerOppCreditAmt",     pick: () => 0 },
-  { line: "32",  element: "RefundableCreditsAmt",           pick: () => 0 },
+  { line: "32",  element: "RefundableCreditsAmt",           pick: (r) => r.refundableCredits },
   { line: "33",  element: "TotalPaymentsAmt",               pick: (r) => r.totalPayments },
   { line: "34",  element: "OverpaidAmt",                    pick: (r) => r.overpaid },
   { line: "35a", element: "RefundAmt",                      pick: (r) => r.refund },
@@ -79,12 +80,37 @@ export function loadTy24Cases(benchDir: string): BenchCase[] {
 
 /** Value of /Return/ReturnData/IRS1040/<element>, or 0 when absent. */
 export function expectedAmount(xml: string, element: string): number {
-  const block = /<IRS1040\b[^>]*>([\s\S]*?)<\/IRS1040>/.exec(xml)?.[1] ?? "";
-  const m = new RegExp(`<${element}(?:\\s[^>]*)?>([^<]*)</${element}>`).exec(block);
-  if (!m) return 0;
-  const n = Number(m[1].replace(/[$,\s]/g, ""));
-  return isNaN(n) ? 0 : n;
+  return expectedAmounts(xml, "IRS1040", element)[0] ?? 0;
 }
+
+/**
+ * Every value of <element> inside each <form> block (e.g. one per Schedule C or
+ * Schedule SE), in document order; a block without the element contributes 0.
+ */
+export function expectedAmounts(xml: string, form: string, element: string): number[] {
+  const blocks = [...xml.matchAll(new RegExp(`<${form}\\b[^>]*>([\\s\\S]*?)</${form}>`, "g"))].map((m) => m[1]);
+  return blocks.map((block) => {
+    const m = new RegExp(`<${element}(?:\\s[^>]*)?>([^<]*)</${element}>`).exec(block);
+    const n = m ? Number(m[1].replace(/[$,\s]/g, "")) : 0;
+    return isNaN(n) ? 0 : n;
+  });
+}
+
+/** Supporting-form amounts shown by --verbose, to locate where a 1040 line diverges. */
+export const DETAIL_LINES: Array<{ form: string; element: string; label: string; pick: (r: ReturnLines) => number[] }> = [
+  { form: "IRS1040ScheduleC", element: "NetProfitOrLossAmt", label: "Sch C 31", pick: (r) => r.scheduleC.map((c) => c.netProfit) },
+  { form: "IRS1040ScheduleSE", element: "SelfEmploymentTaxAmt", label: "Sch SE 12", pick: (r) => r.scheduleSE.filter((s) => !s.belowMinimum).map((s) => s.seTax) },
+  { form: "IRS1040Schedule1", element: "TotalAdditionalIncomeAmt", label: "Sch 1 10", pick: (r) => [r.schedule1.additionalIncome] },
+  { form: "IRS1040Schedule1", element: "DeductibleSelfEmploymentTaxAmt", label: "Sch 1 15", pick: (r) => [r.schedule1.seTaxDeduction] },
+  { form: "IRS1040Schedule1", element: "SelfEmpldHealthInsDedAmt", label: "Sch 1 17", pick: (r) => [r.schedule1.healthInsurance] },
+  { form: "IRS1040Schedule1", element: "StudentLoanInterestDedAmt", label: "Sch 1 21", pick: (r) => [r.schedule1.studentLoanInterest] },
+  { form: "IRS1040Schedule1", element: "UnemploymentCompAmt", label: "Sch 1 7", pick: (r) => [r.schedule1.unemployment] },
+  { form: "IRS1040Schedule2", element: "TotalOtherTaxesAmt", label: "Sch 2 21", pick: (r) => [r.schedule2.otherTaxes] },
+  { form: "IRS8959", element: "TotalAMRRTTaxAmt", label: "8959 18", pick: (r) => [r.form8959.totalTax] },
+  { form: "IRS8959", element: "AddnlMedicareTaxWithholdingAmt", label: "8959 24", pick: (r) => [r.form8959.additionalWithheld] },
+  { form: "IRS1040Schedule3", element: "ExcessSocSecAndTier1RRTATaxAmt", label: "Sch 3 11", pick: (r) => [r.schedule3.excessSocialSecurity] },
+  { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
+];
 
 // ── Input walking ─────────────────────────────────────────────────────────────
 
@@ -118,17 +144,41 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs1040\.(refund_method|routing_number|account_number|bank_account_type|virtual_currency|tp_elects_to_claim_dependent_credit|hoh_planning_to_claim_child_or_dependent_credit)$/,
   /^irs1040\.qualifying_child_(name|ssn|dob|relationship)$/,
   /^irs1040\.(paid_estimated_tax_pmts|estimated_tax_payment_[1-4]|applied_from_prior_year)$/,
-  /^irs1040\.dependent_detail\[\]\.dependent_(first_name|last_name|middle_initial|date_of_birth|months_lived|months_lived_in_us|relationship|ssn|ssn_employment_valid|supported_by_tp|us_citizen_national_or_resident_alien|us_citizen_national_resident_alien_or_canada_mexico_resident|student_for_5_plus_months)$/,
+  /^irs1040\.dependent_detail\[\]\.dependent_(first_name|last_name|middle_initial|date_of_birth|months_lived|months_lived_in_us|relationship|ssn|ssn_itin_atin|ssn_employment_valid|supported_by_tp|us_citizen_national_or_resident_alien|us_citizen_national_resident_alien_or_canada_mexico_resident|student_for_5_plus_months)$/,
   /^w2\[\]\.(who_applies_to|ein|employer_(name|street_address|city|state|zip)|wages|withholding|social_security_(wages|tax|tips)|medicare_(wages_and_tips|tax_withheld)|retirement_plan|third_party_sick_pay)$/,
   /^w2\[\]\.w2_state_local_tax_grp\[\]\./,
   /^w2\[\]\.other_deductions\[\]\./,          // box 14: informational
   /^irs1040_scheduleb\.irs1099_int\[\]\.(interest_1099int_(who_applies_to|payer|payer_ein|interest|fed_inc_tax_withheld)|int_payer_\w+|irs1099_int_state\[\]\.\w+)$/,
   /^irs1040_scheduleb\.irs1099_div\[\]\.dividend_1099div_(who_applies_to|payer|ordinary_div|qualified_div|capital_gain_distr|nondividend_distributions)$/,
   /^irs_payment\./,                            // direct debit of a balance due
+  // Schedule C: identity, Part I questions, income and expense lines. wages_paid / UBIA /
+  // SSTB matter only above the § 199A threshold, which the engine reports as unsupported.
+  /^irs1040_schedulec\[\]\.(who_applies_to|business_(act|code|name|ein)|street_address|city|state|zip|method_accounting|material_participate|schc_at_risk|qualified_business|use_calculated_qbi|specified_service|former_employer|new_business|filed_1099|payment_require_1099|wages_paid|ubia_qualified_property)$/,
+  /^irs1040_schedulec\[\]\.(gross_receipts_cash|returns_allowances|other_income|advertising|commissions_fees|contract_labor|depletion|employee_benefit|insurance|mortgage_interest|other_interest|legal_professional|office_expense|pension_psp|machinery_equip_rent|other_rent|repairs_maintenance|supplies|tax_licenses|travel|meal_entertainment|utilities|wages_expense|se_health_insurance|total_home_area|business_home_area)$/,
+  /^irs1040_schedulec\[\]\.other_expense_detail\[\]\.other_expense_detail_(desc|amt)$/,
+  /^irs1040_schedulec\[\]\.irs1099_nec\[\]\.nec_(payer_\w+|comp|fed_wh)$/,
+  /^irs1040_schedulec\[\]\.irs1099_k\[\]\.k_(payer_\w+|comp|fed_wh)$/,
+  /^irs1040_schedulec\[\]\.irs1099_misc\[\]\.(payer_\w+|rents|other_income|fish_boat_proceeds|medandhlth_care_pmts|misc_fed_wh)$/,
+  // Standard-mileage vehicles: only miles, parking and tolls (see VEHICLE_COST_PATHS).
+  /^irs1040_schedulec\[\]\.vehicle_info_group\[\]\.(vehicle_(standard_mileage|service_date|business_miles|commuting_miles|other_miles|off_duty|another_avail|evidence_support|evidence_written)|car_truck_expense_(parking|tolls))$/,
+  /^irs8995a_schedulec\.prior_yr_qbi_loss_carryforward$/,
+  // Schedule 1: unemployment (1099-G), educator expenses, student loan interest.
+  /^irs1040_schedule1\.irs1099_g\[\]\.(g_payer_\w+|g_who_applies_to|g_unemployment_comp|g_fed_wh|g_amount_repaid_current_year)$/,
+  /^irs1040_schedule1\.irs1099_g\[\]\.irs1099_g_state\[\]\.\w+$/,
+  /^irs1040_schedule1\.(qualified_educator|tp_educator_exp_amount|sp_educator_exp_amount|paid_student_loan_interest|student_interest)$/,
 ];
 
+/**
+ * TaxCalcBench adds the vehicle's loan interest and personal property tax to line 9
+ * pro-rated by a business-use ratio we can't reproduce exactly; keep those cases out.
+ */
+const VEHICLE_COST_PATHS = /^irs1040_schedulec\[\]\.vehicle_info_group\[\]\.car_truck_expense_(tax|interest)$/;
+
+/** W-2 box 12 elective deferrals: no effect on the scored lines unless the Saver's credit (Form 8880) applies. */
+const RETIREMENT_BOX12 = new Set(["D", "E", "F", "G", "H", "S", "AA", "BB", "EE"]);
+
 /** W-2 box 12 codes that never change the scored 1040 lines. */
-const NEUTRAL_BOX12 = new Set(["C", "DD"]);
+const NEUTRAL_BOX12 = new Set(["C", "DD", "L"]);
 
 const FILING_STATUS: Record<string, FilingStatus> = {
   single: "Single",
@@ -163,6 +213,8 @@ export interface Conversion {
   taxpayer?: FakeTaxpayer;
   /** Answers our model does not represent; non-empty → case is out of scope. */
   outOfScope: string[];
+  /** Scope checks that need the computed return (each returns a reason, or undefined when fine). */
+  postChecks: Array<(r: ReturnLines) => string | undefined>;
 }
 
 export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
@@ -170,10 +222,17 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   const header = root.return_header;
   const rd = root.return_data as Record<string, unknown>;
   const outOfScope = new Set<string>();
+  const postChecks: Conversion["postChecks"] = [];
+  let retirementDeferral = false;
 
   for (const [p, v] of leaves(rd)) {
     if (p === "w2[].employers_use_grp[].box_12_code") {
-      if (!NEUTRAL_BOX12.has(String(v))) outOfScope.add(`W-2 box 12 code ${v}`);
+      if (RETIREMENT_BOX12.has(String(v))) retirementDeferral = true;
+      else if (!NEUTRAL_BOX12.has(String(v))) outOfScope.add(`W-2 box 12 code ${v}`);
+      continue;
+    }
+    if (VEHICLE_COST_PATHS.test(p)) {
+      outOfScope.add("Schedule C vehicle loan interest / property tax with the standard mileage rate");
       continue;
     }
     if (p === "w2[].employers_use_grp[].box_12_amount") continue;
@@ -187,6 +246,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   const dependents: Dependent[] = list(f1040, "dependent_detail").map((d) => {
     const rel = String(val(d, "dependent_relationship") ?? "");
     if (val(d, "dependent_ssn_employment_valid") === false) outOfScope.add("dependent SSN not valid for employment (ODC instead of CTC)");
+    if (val(d, "dependent_ssn_itin_atin") === false) outOfScope.add("dependent without an SSN/ITIN/ATIN");
     return {
       firstName: String(val(d, "dependent_first_name") ?? ""),
       lastName: String(val(d, "dependent_last_name") ?? ""),
@@ -238,6 +298,88 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     totalCapitalGain: num(val(d, "dividend_1099div_capital_gain_distr")),
   }));
 
+  const scheduleCs: ScheduleCBusiness[] = list(rd, "irs1040_schedulec").map((c) => {
+    if (val(c, "schc_at_risk") !== true) outOfScope.add("Schedule C investment not all at risk (Form 6198)");
+    if (val(c, "qualified_business") === false) outOfScope.add("Schedule C business not a qualified trade or business (QBI)");
+    if (val(c, "use_calculated_qbi") === false) outOfScope.add("user-adjusted QBI");
+    const nec = list(c, "irs1099_nec"), k = list(c, "irs1099_k"), misc = list(c, "irs1099_misc");
+    const form1099Receipts =
+      nec.reduce((s: number, x) => s + num(val(x, "nec_comp")), 0) +
+      k.reduce((s: number, x) => s + num(val(x, "k_comp")), 0) +
+      misc.reduce((s: number, x) => s + ["rents", "other_income", "fish_boat_proceeds", "medandhlth_care_pmts"].reduce((a: number, f) => a + num(val(x, f)), 0), 0);
+    const veh = list(c, "vehicle_info_group")[0];
+    if (list(c, "vehicle_info_group").length > 1) outOfScope.add("more than one Schedule C vehicle");
+    if (veh && val(veh, "vehicle_standard_mileage") !== true) outOfScope.add("Schedule C vehicle actual expenses");
+    return {
+      owner: val(c, "who_applies_to") === "spouse" ? "spouse" : "primary",
+      principalBusiness: String(val(c, "business_act") ?? ""),
+      businessCode: "",
+      businessName: String(val(c, "business_name") ?? ""),
+      ein: String(val(c, "business_ein") ?? ""),
+      accountingMethod: val(c, "method_accounting") === "accrual" ? "Accrual" : "Cash",
+      materiallyParticipated: val(c, "material_participate") === true,
+      grossReceipts: num(val(c, "gross_receipts_cash")) + form1099Receipts,
+      returnsAllowances: num(val(c, "returns_allowances")),
+      costOfGoodsSold: 0,
+      otherIncome: num(val(c, "other_income")),
+      expenses: {
+        advertising: num(val(c, "advertising")),
+        commissionsFees: num(val(c, "commissions_fees")),
+        contractLabor: num(val(c, "contract_labor")),
+        depletion: num(val(c, "depletion")),
+        employeeBenefits: num(val(c, "employee_benefit")),
+        insurance: num(val(c, "insurance")),
+        mortgageInterest: num(val(c, "mortgage_interest")),
+        otherInterest: num(val(c, "other_interest")),
+        legalProfessional: num(val(c, "legal_professional")),
+        officeExpense: num(val(c, "office_expense")),
+        pensionPlans: num(val(c, "pension_psp")),
+        rentVehicles: num(val(c, "machinery_equip_rent")),
+        rentOther: num(val(c, "other_rent")),
+        repairs: num(val(c, "repairs_maintenance")),
+        supplies: num(val(c, "supplies")),
+        taxesLicenses: num(val(c, "tax_licenses")),
+        travel: num(val(c, "travel")),
+        mealsTotal: num(val(c, "meal_entertainment")),
+        utilities: num(val(c, "utilities")),
+        wages: num(val(c, "wages_expense")),
+        otherExpenses: list(c, "other_expense_detail").reduce((s: number, x) => s + num(val(x, "other_expense_detail_amt")), 0),
+      },
+      vehicle: veh ? {
+        businessMiles: num(val(veh, "vehicle_business_miles")),
+        commutingMiles: num(val(veh, "vehicle_commuting_miles")),
+        otherMiles: num(val(veh, "vehicle_other_miles")),
+        placedInService: isoToUs(val(veh, "vehicle_service_date")),
+        parkingTolls: num(val(veh, "car_truck_expense_parking")) + num(val(veh, "car_truck_expense_tolls")),
+      } : undefined,
+      homeOfficeSqFt: num(val(c, "business_home_area")) || undefined,
+      homeTotalSqFt: num(val(c, "total_home_area")) || undefined,
+      healthInsurancePremiums: num(val(c, "se_health_insurance")) || undefined,
+    };
+  });
+  const schedule1 = rd.irs1040_schedule1;
+  const unemployment1099Gs = list(schedule1, "irs1099_g").map((g) => ({
+    recipient: (val(g, "g_who_applies_to") === "spouse" ? "spouse" : "primary") as "primary" | "spouse",
+    payerName: String(val(g, "g_payer_name") ?? ""),
+    payerTin: String(val(g, "g_payer_tin") ?? ""),
+    compensation: num(val(g, "g_unemployment_comp")),
+    repaidThisYear: num(val(g, "g_amount_repaid_current_year")),
+    federalWithheld: num(val(g, "g_fed_wh")),
+  }));
+  const educator = val(schedule1, "qualified_educator") === true;
+
+  const scheduleC1099Withholding = list(rd, "irs1040_schedulec").reduce((s: number, c) =>
+    s + list(c, "irs1099_nec").reduce((a: number, x) => a + num(val(x, "nec_fed_wh")), 0)
+      + list(c, "irs1099_k").reduce((a: number, x) => a + num(val(x, "k_fed_wh")), 0)
+      + list(c, "irs1099_misc").reduce((a: number, x) => a + num(val(x, "misc_fed_wh")), 0), 0);
+
+  if (retirementDeferral) {
+    postChecks.push((r) => {
+      const limit = saversCreditAgiLimit(taxYear, status ?? "Single");
+      return r.agi <= limit ? `W-2 elective deferral with AGI ≤ ${limit} (Saver's credit, Form 8880)` : undefined;
+    });
+  }
+
   const estimated =
     [1, 2, 3, 4].reduce((s, q) => s + num(val(f1040, `estimated_tax_payment_${q}`)), 0) +
     num(val(f1040, "applied_from_prior_year"));
@@ -246,6 +388,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   const taxpayer: FakeTaxpayer = {
     seed: 0,
     taxYear,
+    wholeDollars: true,   // MeF amounts are whole dollars
     firstName: String(val(f1040, "tp_first_name") ?? ""),
     middleInitial: String(val(f1040, "tp_middle_initial") ?? ""),
     lastName: String(val(f1040, "tp_last_name") ?? ""),
@@ -276,6 +419,14 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     totalDividends: dividend1099s.reduce((s, d) => s + d.ordinaryDividends, 0),
     totalQualifiedDividends: dividend1099s.reduce((s, d) => s + d.qualifiedDividends, 0),
     businessIncome: null,
+    scheduleCs,
+    priorYearQbiLoss: num(val(rd.irs8995a_schedulec, "prior_yr_qbi_loss_carryforward")),
+    otherForm1099Withholding: scheduleC1099Withholding,
+    unemployment1099Gs,
+    educatorExpenses: educator
+      ? { primary: num(val(schedule1, "tp_educator_exp_amount")), spouse: num(val(schedule1, "sp_educator_exp_amount")) }
+      : undefined,
+    studentLoanInterestPaid: val(schedule1, "paid_student_loan_interest") === true ? num(val(schedule1, "student_interest")) : 0,
     rentalIncome: null,
     capitalGains: null,
     socialSecurityBenefits: null,
@@ -285,5 +436,5 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     preparerPtin: null,
   };
 
-  return { taxpayer, outOfScope: [...outOfScope] };
+  return { taxpayer, outOfScope: [...outOfScope], postChecks };
 }
