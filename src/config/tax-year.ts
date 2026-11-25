@@ -189,6 +189,24 @@ export const SOCIAL_SECURITY_TAXABILITY = {
 };
 
 /**
+ * Premium tax credit (Form 8962), from each year's Form 8962 instructions. The poverty line
+ * is the prior year's (Tables 1-1 to 1-3): first person + each additional person; the tables
+ * are linear. Repayment limitation (Table 5): by line 5 percentage, single vs other filers;
+ * none at 400% or more.
+ */
+export const PTC_POVERTY_LINE: Record<number, Record<"contiguous" | "alaska" | "hawaii", [number, number]>> = {
+  2023: { contiguous: [13590, 4720], alaska: [16990, 5900], hawaii: [15630, 5430] },
+  2024: { contiguous: [14580, 5140], alaska: [18210, 6430], hawaii: [16770, 5910] },
+  2025: { contiguous: [15060, 5380], alaska: [18810, 6730], hawaii: [17310, 6190] },
+};
+/** [under 200%, 200–300%, 300–400%] × [single, other filing status]. */
+export const PTC_REPAYMENT_LIMIT: Record<number, Array<[number, number]>> = {
+  2023: [[350, 700], [900, 1800], [1500, 3000]],
+  2024: [[375, 750], [950, 1900], [1575, 3150]],
+  2025: [[375, 750], [975, 1950], [1625, 3250]],
+};
+
+/**
  * Alaska Permanent Fund dividend per eligible resident (Schedule 1 line 8g), including any
  * energy relief payment made with it: 2023 $1,312; 2024 $1,702 ($1,403.83 + $298.17 energy
  * relief); 2025 $1,000 (Alaska Department of Revenue announcements).

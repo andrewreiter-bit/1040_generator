@@ -95,6 +95,7 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   line13:           (t) => moneyOrBlank(r(t).qbiDeduction),
   line13b:          (t) => moneyOrBlank(r(t).additionalDeductions),
   line16:           (t) => money(r(t).tax),
+  line17:           (t) => moneyOrBlank(r(t).scheduleTwoPartOne),
   line19:           (t) => moneyOrBlank(r(t).childAndOtherDependentCredit),
   line20:           (t) => moneyOrBlank(r(t).scheduleThreeCredits),
   line23:           (t) => moneyOrBlank(r(t).otherTaxes),
@@ -194,6 +195,7 @@ const DEPS = `${P1}Table_Dependents[0].`;
 const PAGE2_2023_2024 = {
   text: {
     line16: `${P2}f2_02[0]`,
+    line17: `${P2}f2_03[0]`,
     line19: `${P2}f2_05[0]`,
     line20: `${P2}f2_06[0]`,
     line23: `${P2}f2_09[0]`,
@@ -416,6 +418,7 @@ const LAYOUT_2025: Layout1040 = {
     line13: `${P2}f2_03[0]`,   // 13a
     line13b: `${P2}f2_04[0]`,  // Schedule 1-A
     line16: `${P2}f2_08[0]`,
+    line17: `${P2}f2_09[0]`,
     line19: `${P2}f2_11[0]`,
     line20: `${P2}f2_12[0]`,
     line23: `${P2}f2_15[0]`,

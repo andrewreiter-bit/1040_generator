@@ -12,6 +12,7 @@ import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "
 import { addRetirementSavings, buildRetirement1099Rs } from "./retirement";
 import { buildDependentCare } from "./dependent-care";
 import { buildEducation } from "./education";
+import { buildMarketplace } from "./marketplace";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -246,6 +247,9 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   // College and graduate tuition (Forms 1098-T and 8863; last draws).
   const education = buildEducation(faker, taxpayer);
   if (education) taxpayer.education = education;
+  // Marketplace health coverage (Forms 1095-A and 8962; last draws).
+  const marketplace = buildMarketplace(faker, taxpayer);
+  if (marketplace) taxpayer.marketplace1095As = marketplace;
   return taxpayer;
 }
 

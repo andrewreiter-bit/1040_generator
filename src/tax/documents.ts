@@ -56,6 +56,7 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.form8880) out.push("f8880");
   if (r.form2441) out.push("f2441");
   if (r.form8863) out.push("f8863");
+  if (r.form8962) out.push("f8962");
   if (r.scheduleC.length) out.push("f1040sc");
   if (r.scheduleSE.some((s) => !s.belowMinimum)) out.push("f1040sse");
   if (r.form8995 && !r.form8995.overThreshold) out.push("f8995");
@@ -96,6 +97,15 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f8582":   return single(formId, t, "Form 8582");
     case "f8880":   return single(formId, t, "Form 8880");
     case "f2441":   return single(formId, t, "Form 2441");
+    case "f8962":   return single(formId, t, "Form 8962");
+    case "f1095a": {
+      if (!getFieldMap("f1095a", t.taxYear)) return [];
+      const ps = t.marketplace1095As ?? [];
+      return ps.map((p, i) => ({
+        index: i + 1, count: ps.length, label: `1095-A #${i + 1} (${p.issuer})`,
+        view: { ...t, document: { source: t, policyIndex: i } },
+      }));
+    }
     case "f8863": {
       // One Form 8863 per student (page 1 is filled on the first only).
       const f = computeReturn(t).form8863;

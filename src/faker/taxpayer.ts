@@ -324,6 +324,20 @@ export interface Education {
   aotcNonrefundableOnly?: boolean;
 }
 
+/**
+ * Form 1095-A, Health Insurance Marketplace Statement: one policy covering the household for
+ * the whole year at the same monthly amounts (so Form 8962 line 11's annual calculation applies).
+ */
+export interface Marketplace1095A {
+  marketplaceId: string;
+  policyNumber: string;
+  issuer: string;
+  /** Annual totals (line 33, columns A–C). */
+  annualPremium: number;           // A: enrollment premiums
+  annualSlcsp: number;             // B: second lowest cost silver plan premium
+  annualAdvancePayments: number;   // C: advance payment of the PTC
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -344,6 +358,8 @@ export interface DocumentContext {
   retirementIndex?: number;
   /** Which education student (index into source.education.students): Form 1098-T, Form 8863 page 2. */
   educationIndex?: number;
+  /** Which Marketplace policy (index into source.marketplace1095As): Form 1095-A. */
+  policyIndex?: number;
 }
 
 export interface FakeTaxpayer {
@@ -402,6 +418,8 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Health Insurance Marketplace coverage (Forms 1095-A → Form 8962). */
+  marketplace1095As?: Marketplace1095A[];
   /** Education credits: students, institutions and expenses (Form 8863, Forms 1098-T). */
   education?: Education;
   /** Child and dependent care expenses and providers (Form 2441). */
