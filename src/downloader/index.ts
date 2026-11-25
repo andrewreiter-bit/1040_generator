@@ -54,6 +54,10 @@ export async function downloadForm(form: FormEntry): Promise<string> {
   const cachePath = path.join(CACHE_DIR, `${form.id}.pdf`);
   const formPath = path.join(FORMS_DIR, `${form.id}.pdf`);
 
+  // A PDF already in this year's forms directory wins: irs.gov's URL serves the current
+  // revision, which may be a later year's form than the directory holds.
+  if (await fs.pathExists(formPath)) return formPath;
+
   // Use cache if available
   if (await fs.pathExists(cachePath)) {
     await fs.copy(cachePath, formPath, { overwrite: false });
