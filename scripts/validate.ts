@@ -34,12 +34,12 @@ import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
-import { saversCreditRate } from "../src/config/tax-year";
+import { IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
-  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "fw4",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
@@ -251,7 +251,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
     ["6a", "line6a", r.socialSecurity.line1], ["6b", "line6b", r.socialSecurity.taxable],
     ["8", "line8", r.additionalIncome], ["9", "line9", r.totalIncome], ["10", "line10", r.adjustments],
     ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["13b", "line13b", r.additionalDeductions], ["14", "line14", r.totalDeductions],
-    ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
+    ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["17", "line17", r.scheduleTwoPartOne], ["18", "line18", r.taxBeforeCredits],
     ["19", "line19", r.childAndOtherDependentCredit], ["20", "line20", r.scheduleThreeCredits], ["22", "line22", r.taxAfterCredits], ["23", "line23", r.otherTaxes],
     ["24", "line24", r.totalTax], ["25b", "line25b", r.form1099Withholding], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
     ["27", "line27", r.earnedIncomeCredit], ["28", "line28", r.additionalChildTaxCredit], ["29", "line29", r.americanOpportunityCredit],
@@ -444,6 +444,34 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "sch1-10-equals-1040-8", n0(s1("line10")), n0(line("line8")), "Schedule 1 line 10 vs 1040 line 8");
     tie(2, "sch1-26-equals-1040-10", n0(s1("line26")), n0(line("line10")), "Schedule 1 line 26 vs 1040 line 10");
     tie(2, "sch1-3-equals-schC-total", n0(s1("line3")), r.schedule1.businessIncome, "Schedule 1 line 3 vs Σ Sch C 31");
+    // Line 20: the IRA Deduction Worksheet, refigured from the contributions and the filled W-2s' box 13.
+    const ira = t.traditionalIraContributions;
+    if (ira && (ira.primary || ira.spouse)) {
+      const joint = t.filingStatus === "MFJ";
+      const w2Docs = (docs.fw2 ?? []).map((run, i) => ({ k: keyed(run, "fw2"), w: includedW2s(t)[i] }));
+      const covered = (who: string) => w2Docs.some((d) => (d.w?.employee ?? "primary") === who && d.k("CopyB.box13.retirementPlan") === "Yes");
+      const anyCovered = covered("primary") || (joint && covered("spouse"));
+      const age = (dob: string | null) => t.taxYear - Number((dob ?? "").split("/")[2]);
+      const ends = IRA_PHASEOUT_END[t.taxYear];
+      const line5 = round2(n0(line("line9")) - n0(s1("line11")) - n0(s1("line15")) - n0(s1("line17")) - n0(s1("line18")));
+      const comp = round2(includedW2s(t).filter((w) => joint || (w.employee ?? "primary") === "primary").reduce((x, w) => x + w.wages, 0)
+        + r.scheduleSE.filter((x) => joint || x.owner === "primary").reduce((x, se) => x + se.combined - se.deduction, 0));
+      const per = (who: "primary" | "spouse", dob: string | null) => {
+        const contrib = ira[who] ?? 0;
+        if (!contrib || (who === "spouse" && !joint)) return 0;
+        const limit = IRA_CONTRIBUTION_LIMIT[t.taxYear] + (age(dob) >= 50 ? IRA_CATCH_UP : 0);
+        let l7 = limit;
+        if (anyCovered) {
+          const end = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false ? ends.mfsTogether : joint ? (covered(who) ? ends.joint : ends.spouseCovered) : ends.single;
+          const width = joint && covered(who) ? 20000 : 10000;
+          const room = round2(end - line5);
+          l7 = room <= 0 ? 0 : room >= width ? limit : Math.max(200, Math.ceil((room * limit) / width / 10) * 10);
+        }
+        return Math.min(l7, comp, contrib);
+      };
+      const want = round2(per("primary", t.dateOfBirth) + per("spouse", t.spouseDateOfBirth));
+      tie(2, "sch1-20-ira-deduction", n0(s1("line20")), want, "Schedule 1 line 20 vs IRA Deduction Worksheet");
+    }
     // Line 8g: the household's Alaska Permanent Fund dividends (a spouse's only on a joint return).
     const pfd = (t.alaskaPermanentFundDividends?.primary ?? 0) + (t.filingStatus === "MFJ" ? t.alaskaPermanentFundDividends?.spouse ?? 0 : 0);
     tie(2, "sch1-8g-equals-alaska-pfd", n0(s1("line8g")), pfd, "Schedule 1 line 8g vs household PFD");
@@ -609,6 +637,44 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "8863-19-equals-sch3-3", n0(p1("line19")), n0(s3("line3")), "Form 8863 line 19 vs Schedule 3 line 3");
     checks.push({ phase: 2, id: "8863-one-per-student", ok: e63.length === ed.students.length || e63.length === r.form8863!.students.length, detail: `${e63.length} Form 8863(s), ${ed.students.length} student(s)` });
   }
+  // ── Form 8962 (premium tax credit), recomputed from the filled 1095-As and the 1040 ────
+  const p62 = keyed(docs.f8962?.[0], "f8962");
+  if (docs.f8962?.length) {
+    const bad: string[] = [];
+    const a95 = (docs.f1095a ?? []).map((run) => keyed(run, "f1095a"));
+    const col = (c: string) => round2(a95.reduce((x, k) => x + n0(k(`line33.${c}`)), 0));
+    const monthsOk = a95.every((k) => ["A", "B", "C"].every((c) => near(round2(Array.from({ length: 12 }, (_, m) => n0(k(`line${21 + m}.${c}`))).reduce((x, y) => x + y, 0)), n0(k(`line33.${c}`)))));
+    if (!monthsOk) bad.push("1095-A months don't add up to line 33");
+    const family = 1 + (t.filingStatus === "MFJ" ? 1 : 0) + t.dependents.filter((d) => d.birthYear <= t.taxYear).length;
+    if (Number(p62("line1")) !== family) bad.push(`1 ${p62("line1")} vs family of ${family}`);
+    const magi = round2(n0(line("line11")) + Math.max(0, n0(line("line6a")) - n0(line("line6b"))));
+    if (!near(n0(p62("line2a")), magi)) bad.push(`2a ${p62("line2a")} vs AGI + nontaxable SS ${money(magi)}`);
+    const tbl = t.state === "AK" ? "alaska" : t.state === "HI" ? "hawaii" : "contiguous";
+    const [first, each] = PTC_POVERTY_LINE[t.taxYear][tbl];
+    const fpl = first + each * (family - 1);
+    if (!near(n0(p62("line4")), fpl)) bad.push(`4 ${p62("line4")} vs ${fpl}`);
+    const l3 = n0(p62("line3"));
+    const pct = l3 > fpl * 4 ? 401 : Math.floor((l3 * 100) / fpl + 1e-9);
+    if (Number(p62("line5")) !== pct) bad.push(`5 ${p62("line5")} vs ${pct}`);
+    // Table 2: 0 to 150%; +0.04 points per percent to 6% at 300%; +0.025 per percent to 8.5% at 400%; rounded half up.
+    const fig = pct <= 150 ? 0 : pct >= 400 ? 0.085 : Math.floor(((pct <= 300 ? (pct - 150) * 40 : 6000 + (pct - 300) * 25) + 5) / 10) / 10000;
+    if (Math.abs(Number(p62("line7")) - fig) > 1e-9) bad.push(`7 ${p62("line7")} vs ${fig}`);
+    const l8a = Math.floor((Math.round(l3 * 100) * Math.round(fig * 10000) + 500000) / 1000000);
+    if (!near(n0(p62("line8a")), l8a)) bad.push(`8a ${p62("line8a")} vs ${l8a}`);
+    const a = col("A"), b = col("B"), f = col("C");
+    const d = Math.max(0, round2(b - l8a)), e = Math.min(a, d);
+    if (!near(n0(p62("line11.a")), a) || !near(n0(p62("line11.b")), b) || !near(n0(p62("line11.f")), f)) bad.push("11 a/b/f vs 1095-A line 33");
+    if (!near(n0(p62("line11.d")), d) || !near(n0(p62("line11.e")), e)) bad.push(`11 d/e vs ${money(d)}/${money(e)}`);
+    const excess = Math.max(0, round2(f - e));
+    const tier = pct < 200 ? 0 : pct < 300 ? 1 : pct < 400 ? 2 : -1;
+    const cap = tier < 0 ? Infinity : PTC_REPAYMENT_LIMIT[t.taxYear][tier][t.filingStatus === "Single" ? 0 : 1];
+    if (!near(n0(p62("line26")), Math.max(0, round2(e - f)))) bad.push("26 vs 24 − 25");
+    if (!near(n0(p62("line29")), Math.min(excess, cap))) bad.push(`29 ${p62("line29")} vs min(excess, limit)`);
+    checks.push({ phase: 2, id: "8962-lines-from-1095as", ok: !bad.length, detail: bad.join("; ") || undefined });
+    tie(2, "8962-26-equals-sch3-9", n0(p62("line26")), n0(s3("line9")), "Form 8962 line 26 vs Schedule 3 line 9");
+    tie(2, "8962-29-equals-sch2-and-1040-17", n0(p62("line29")), n0(line("line17")), "Form 8962 line 29 vs 1040 line 17");
+    if (docs.f1040s2?.length) tie(2, "8962-29-equals-sch2-excess-aptc", n0(p62("line29")), n0(s2("excessAptc")), "Form 8962 line 29 vs Schedule 2 excess APTC line");
+  }
   if (docs.f1040s3?.length) tie(2, "sch3-8-equals-1040-20", n0(s3("line8")), n0(line("line20")), "Schedule 3 line 8 vs 1040 line 20");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
   const m59 = keyed(docs.f8959?.[0], "f8959");
@@ -760,7 +826,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

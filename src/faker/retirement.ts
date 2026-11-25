@@ -149,3 +149,24 @@ export function addRetirementSavings(faker: Faker, t: FakeTaxpayer, ssWageBase: 
     t.rothIraContributions = { ...(t.rothIraContributions ?? {}), [who]: round2(Math.min(max, dollars(faker, 500, max))) };
   }
 }
+
+/**
+ * After every other draw: about 12% of people with wages contribute to a traditional IRA, but
+ * only where nobody on the return is covered by a workplace plan (no W-2 box 13 / deferrals)
+ * and nobody made Roth contributions, so the whole contribution is deductible (no phase-out,
+ * no Form 8606) and the 1040 worksheet applies. Capped at the year's limit and their wages.
+ */
+export function addTraditionalIra(faker: Faker, t: FakeTaxpayer, limit: number, catchUp: number): void {
+  const people: Array<"primary" | "spouse"> = t.filingStatus === "MFJ" ? ["primary", "spouse"] : ["primary"];
+  const draws = people.map(() => ({ go: faker.datatype.boolean({ probability: 0.12 }), share: faker.number.float({ min: 0.15, max: 1, fractionDigits: 3 }) }));
+  const onReturn = t.w2Records.filter((w) => w.employee !== "spouse" || t.filingStatus === "MFJ");
+  const covered = onReturn.some((w) => w.retirementPlan ?? (w.box12 ?? []).some((e) => ["D", "E", "F", "G", "H", "S", "AA", "BB", "EE"].includes(e.code)));
+  if (covered || t.rothIraContributions) return;
+  people.forEach((who, i) => {
+    const wages = onReturn.filter((w) => (w.employee ?? "primary") === who).reduce((s, w) => s + w.wages, 0);
+    const age = t.taxYear - Number(((who === "primary" ? t.dateOfBirth : t.spouseDateOfBirth) ?? "").split("/")[2]);
+    const max = Math.min(limit + (age >= 50 ? catchUp : 0), wages);
+    if (!draws[i].go || max < 500) return;
+    t.traditionalIraContributions = { ...(t.traditionalIraContributions ?? {}), [who]: Math.round(max * draws[i].share) };
+  });
+}

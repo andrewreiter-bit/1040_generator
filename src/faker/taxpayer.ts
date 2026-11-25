@@ -47,6 +47,8 @@ export interface W2Record {
    * code D deferrals; A/B/M/N come only from the answer key.
    */
   box12?: Array<{ code: string; amount: number }>;
+  /** Box 13 "Retirement plan": covered by a plan at work. Omitted = covered when box 12 shows an elective deferral. */
+  retirementPlan?: boolean;
 }
 
 export interface Interest1099 {
@@ -324,6 +326,20 @@ export interface Education {
   aotcNonrefundableOnly?: boolean;
 }
 
+/**
+ * Form 1095-A, Health Insurance Marketplace Statement: one policy covering the household for
+ * the whole year at the same monthly amounts (so Form 8962 line 11's annual calculation applies).
+ */
+export interface Marketplace1095A {
+  marketplaceId: string;
+  policyNumber: string;
+  issuer: string;
+  /** Annual totals (line 33, columns A–C). */
+  annualPremium: number;           // A: enrollment premiums
+  annualSlcsp: number;             // B: second lowest cost silver plan premium
+  annualAdvancePayments: number;   // C: advance payment of the PTC
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -344,6 +360,8 @@ export interface DocumentContext {
   retirementIndex?: number;
   /** Which education student (index into source.education.students): Form 1098-T, Form 8863 page 2. */
   educationIndex?: number;
+  /** Which Marketplace policy (index into source.marketplace1095As): Form 1095-A. */
+  policyIndex?: number;
 }
 
 export interface FakeTaxpayer {
@@ -402,10 +420,14 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Health Insurance Marketplace coverage (Forms 1095-A → Form 8962). */
+  marketplace1095As?: Marketplace1095A[];
   /** Education credits: students, institutions and expenses (Form 8863, Forms 1098-T). */
   education?: Education;
   /** Child and dependent care expenses and providers (Form 2441). */
   dependentCare?: DependentCare;
+  /** Traditional IRA contributions for the year, per person (IRA deduction, Schedule 1 line 20; Form 8880 line 1). */
+  traditionalIraContributions?: { primary?: number; spouse?: number };
   /** Roth IRA contributions for the year, per person (Form 8880 line 1; not deductible). */
   rothIraContributions?: { primary?: number; spouse?: number };
   /** Full-time student for some part of 5 months of the year (no Saver's credit for that person). */

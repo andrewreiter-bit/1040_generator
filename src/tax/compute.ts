@@ -42,6 +42,8 @@ import { RetirementLines, retirementDistributions } from "./retirement";
 import { Form8880Lines, form8880 } from "./savers-credit";
 import { Form2441Lines, form2441 } from "./dependent-care";
 import { Form8863Lines, form8863 } from "./education";
+import { Form8962Lines, form8962 } from "./premium-tax-credit";
+import { IraDeductionLines, iraDeduction } from "./ira";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -56,6 +58,8 @@ export interface Schedule1Lines {
   seTaxDeduction: number;      // 15
   healthInsurance: number;     // 17
   earlyWithdrawalPenalty: number; // 18 (1099-INT box 2)
+  iraDeduction: number;        // 20
+  iraWorksheet?: IraDeductionLines;
   studentLoanInterest: number; // 21
   adjustments: number;         // 26 → 1040 line 10
   required: boolean;
@@ -79,6 +83,7 @@ export interface Schedule3Lines {
   saversCredit: number;         // 4 (Form 8880 line 12)
   nonrefundableCredits: number; // 8 → 1040 line 20
   excessSocialSecurity: number; // 11
+  netPremiumTaxCredit: number;  // 9 (Form 8962 line 26)
   otherPayments: number;        // 15 → 1040 line 31
   required: boolean;
 }
@@ -120,7 +125,9 @@ export interface ReturnLines {
   totalDeductions: number;     // 14
   taxableIncome: number;       // 15
   tax: number;                 // 16
-  scheduleTwoPartOne: number;  // 17
+  scheduleTwoPartOne: number;  // 17 (Schedule 2 line 3: excess advance PTC repayment; no AMT)
+  /** Form 8962 (premium tax credit), when the household had Marketplace coverage. */
+  form8962?: Form8962Lines;
   taxBeforeCredits: number;    // 18
   childAndOtherDependentCredit: number; // 19
   scheduleThreeCredits: number;          // 20
@@ -282,30 +289,35 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   }
   const rentalIncome = schE?.line26 ?? 0;
   const additionalIncome = round2(businessIncome + rentalIncome + unemployment + otherIncome);
-  // Lines 6a/6b: the worksheet uses every other income line and the adjustments other
-  // than student loan interest (whose own worksheet uses line 9, so it comes after).
-  const socialSecurity = socialSecurityWorksheet(
-    t,
-    round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome),
-    sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]),
-    R,
-  );
-  const totalIncome = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + socialSecurity.taxable + capitalGain + additionalIncome);
+  // Lines 6a/6b: the worksheet uses every other income line and the adjustments other than
+  // student loan interest (whose own worksheet uses line 9, so it comes after). The IRA
+  // deduction is one of those adjustments, but its own worksheet needs line 9: figure line 9
+  // without it first, then the deduction, then the Social Security worksheet again with it.
+  // (Only exact when nobody is covered by a workplace plan or there are no benefits; the
+  // other case is Pub 590-A Appendix B and is reported as unsupported.)
+  const otherIncome9 = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome);
+  const otherAdjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]);
+  const ss0 = socialSecurityWorksheet(t, otherIncome9, otherAdjustments, R);
+  const ira = iraDeduction(t, w2s, scheduleSEs, round2(otherIncome9 + ss0.taxable), otherAdjustments, ss0.line1 > 0, R);
+  if (ira) unsupported.push(...ira.unsupported);
+  const iraDeductionAmount = ira?.deduction ?? 0;
+  const socialSecurity = iraDeductionAmount ? socialSecurityWorksheet(t, otherIncome9, round2(otherAdjustments + iraDeductionAmount), R) : ss0;
+  const totalIncome = round2(otherIncome9 + socialSecurity.taxable);
 
   // Student Loan Interest Deduction Worksheet (not allowed on MFS).
   let studentLoanInterest = 0;
   if ((t.studentLoanInterestPaid ?? 0) > 0 && t.filingStatus !== "MFS") {
     const w1 = Math.min(t.studentLoanInterestPaid!, STUDENT_LOAN_INTEREST.max);
-    const w4 = round2(totalIncome - (educatorExpenses + seTaxDeduction + healthInsurance + earlyWithdrawalPenalty));
+    const w4 = round2(totalIncome - (otherAdjustments + iraDeductionAmount));
     const start = joint ? c.studentLoanPhaseoutStart.joint : c.studentLoanPhaseoutStart.other;
     const range = joint ? STUDENT_LOAN_INTEREST.phaseoutRange.joint : STUDENT_LOAN_INTEREST.phaseoutRange.other;
     const w6 = Math.min(1, Math.round((Math.max(0, w4 - start) / range) * 1000) / 1000);
     studentLoanInterest = round2(w1 - round2(w1 * w6));
   }
-  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, studentLoanInterest]);
+  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, iraDeductionAmount, studentLoanInterest]);
   const schedule1: Schedule1Lines = {
     businessIncome, rentalIncome, unemployment, unemploymentRepaid, alaskaPfd, otherIncome, additionalIncome, educatorExpenses, seTaxDeduction,
-    healthInsurance, earlyWithdrawalPenalty, studentLoanInterest, adjustments,
+    healthInsurance, earlyWithdrawalPenalty, iraDeduction: iraDeductionAmount, iraWorksheet: ira, studentLoanInterest, adjustments,
     required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0 || !!schE,
   };
 
@@ -363,7 +375,14 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const tax = qualifiedDividends > 0 || netCapitalGain > 0
     ? qdcgTax(taxableIncome, qualifiedDividends, netCapitalGain, t, R)
     : R(taxOnIncome(taxableIncome, t.taxYear, t.filingStatus));
-  const scheduleTwoPartOne = 0; // AMT / excess APTC not modelled
+  // Schedule 2 Part I: the excess advance PTC repayment (Form 8962 line 29); AMT isn't modelled.
+  const f8962 = form8962(t, agi, socialSecurity, R);
+  if (f8962) unsupported.push(...f8962.unsupported);
+  // The self-employed health insurance deduction and the PTC depend on each other (Rev. Proc. 2014-41).
+  if (f8962 && scheduleCs.some((c) => (c.business.healthInsurancePremiums ?? 0) > 0)) {
+    unsupported.push("Marketplace coverage with a self-employed health insurance deduction (Rev. Proc. 2014-41 iteration)");
+  }
+  const scheduleTwoPartOne = f8962?.line29 ?? 0;
   const taxBeforeCredits = round2(tax + scheduleTwoPartOne);
 
   // ── Child tax credit / credit for other dependents (Schedule 8812 Part I) ──
@@ -420,8 +439,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
   const excessSs = excessSocialSecurity(t, w2s, R).total;
   const schedule3: Schedule3Lines = {
-    dependentCareCredit, educationCredit, saversCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs, otherPayments: excessSs,
-    required: excessSs > 0 || scheduleThreeCredits > 0,
+    dependentCareCredit, educationCredit, saversCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs,
+    netPremiumTaxCredit: f8962?.line26 ?? 0, otherPayments: round2(excessSs + (f8962?.line26 ?? 0)),
+    required: excessSs > 0 || scheduleThreeCredits > 0 || (f8962?.line26 ?? 0) > 0,
   };
   const scheduleThreePayments = schedule3.otherPayments;
 
@@ -463,7 +483,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     capitalGain, netCapitalGain, scheduleDRequired, capital, retirement, socialSecurity, standardDeductionAmount, itemizes,
     scheduleA: itemizes ? schA : undefined, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
-    tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
+    // Form 8962 is filed only to claim the PTC or reconcile advance payments.
+    tax, scheduleTwoPartOne, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
     earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit, americanOpportunityCredit,

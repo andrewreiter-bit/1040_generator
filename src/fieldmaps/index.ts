@@ -13,11 +13,12 @@ import { F1099R_MAPS } from "./f1099r";
 import { SAVERS_CREDIT_MAPS } from "./savers-credit";
 import { FORM_2441_MAPS } from "./dependent-care";
 import { EDUCATION_MAPS } from "./education";
+import { PREMIUM_TAX_CREDIT_MAPS } from "./premium-tax-credit";
 
 export * from "./types";
 
 const ALL_MAPS: FieldMap[] = [
-  ...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS, ...SCHEDULE_C_MAPS, ...SCHEDULE_SE_MAPS, ...SCHEDULE_1_2_3_MAPS, ...CAPITAL_MAPS, ...CREDIT_MAPS, ...F1099B_MAPS, ...SCHEDULE_A_E_MAPS, ...FORM_8582_MAPS, ...QBI_MAPS, ...F1099R_MAPS, ...SAVERS_CREDIT_MAPS, ...FORM_2441_MAPS, ...EDUCATION_MAPS,
+  ...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS, ...SCHEDULE_C_MAPS, ...SCHEDULE_SE_MAPS, ...SCHEDULE_1_2_3_MAPS, ...CAPITAL_MAPS, ...CREDIT_MAPS, ...F1099B_MAPS, ...SCHEDULE_A_E_MAPS, ...FORM_8582_MAPS, ...QBI_MAPS, ...F1099R_MAPS, ...SAVERS_CREDIT_MAPS, ...FORM_2441_MAPS, ...EDUCATION_MAPS, ...PREMIUM_TAX_CREDIT_MAPS,
 ];
 
 export function getFieldMap(formId: string, taxYear: number): FieldMap | undefined {

@@ -112,6 +112,8 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS1040", element: "TaxableIRAAmt", label: "1040 4b", pick: (r) => [r.retirement.line4b] },
   { form: "IRS1040", element: "TaxablePensionsAmt", label: "1040 5b", pick: (r) => [r.retirement.line5b] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
+  { form: "IRS8962", element: "TotalPremiumTaxCreditAmt", label: "8962 24", pick: (r) => (r.form8962 ? [r.form8962.line24] : []) },
+  { form: "IRS1040Schedule2", element: "PremiumTaxCreditTaxLiabAmt", label: "Sch 2 1a", pick: (r) => (r.scheduleTwoPartOne ? [r.scheduleTwoPartOne] : []) },
   { form: "IRS8880", element: "CrQualifiedRetirementSavAmt", label: "8880 12", pick: (r) => (r.form8880 ? [r.form8880.line12] : []) },
   { form: "IRS8995A", element: "TotalQBIComponentAmt", label: "8995-A 16", pick: (r) => (r.form8995A ? [r.form8995A.line16] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
@@ -186,6 +188,8 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs1040\.(tp_blind|sp_blind)$/,
   // Form 2441: care providers and prior-year expenses paid this year (line 9b).
   /^irs2441\.(carryover|care_provider_grp\[\]\.(provider_name|street_address|city|state|zip|provider_ssn|provider_ein|paid_to_provider)|qualifying_person_grp\[\]\.(person|qualifying_expenses_paid))$/,
+  // Form 8962 / 1095-A: one full-year policy (annual amounts).
+  /^irs8962\.(received_1095a|full_year_coverage_1095a|annual_premium|annual_premium_slcsp|annual_advanced_ptc)$/,
   // Form 8863 (one institution per student).
   /^irs8863\.(total_support_8863|either_parent_alive)$/,
   /^irs8863\.student_educational_instn_grp\[\]\.(student|prior_year_credit_claimed|academic_period_eligible_student|post_secondary_education|drug_felony_conviction)$/,
@@ -317,6 +321,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       stateWithheld: num(val(st, "state_income_tax")),
       stateCode: String(val(st, "state") ?? ""),
       employee: val(w, "who_applies_to") === "spouse" ? "spouse" : "primary",
+      retirementPlan: val(w, "retirement_plan") === true,
       box12: list(w, "employers_use_grp")
         .map((e) => ({ code: String(val(e, "box_12_code") ?? ""), amount: num(val(e, "box_12_amount")) }))
         .filter((e) => UNCOLLECTED_BOX12.has(e.code) || RETIREMENT_BOX12.has(e.code)),
@@ -525,6 +530,17 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     && dependents.some((d) => taxYear - d.birthYear < 13 || (d.disabled && d.monthsInHome > 6))) {
     outOfScope.add("Form 2441 care for a qualifying person without per-person expenses");
   }
+  // Form 8962: a single 1095-A with annual amounts; part-year coverage needs the monthly lines.
+  const ptc = rd.irs8962;
+  let marketplace1095As: FakeTaxpayer["marketplace1095As"];
+  if (val(ptc, "received_1095a") === true) {
+    if (val(ptc, "full_year_coverage_1095a") !== true) outOfScope.add("Form 1095-A coverage for part of the year (Form 8962 monthly lines)");
+    marketplace1095As = [{
+      marketplaceId: "", policyNumber: "", issuer: "",
+      annualPremium: num(val(ptc, "annual_premium")), annualSlcsp: num(val(ptc, "annual_premium_slcsp")),
+      annualAdvancePayments: num(val(ptc, "annual_advanced_ptc")),
+    }];
+  }
   // Form 8863: the qualified expenses given are the adjusted expenses (no scholarships split out).
   const educationGroups = list(rd.irs8863, "student_educational_instn_grp");
   let education: Education | undefined;
@@ -609,6 +625,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     retirement1099Rs: retirement1099Rs.length ? retirement1099Rs : undefined,
     dependentCare,
     education,
+    marketplace1095As,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }
       : undefined,

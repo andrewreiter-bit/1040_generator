@@ -36,17 +36,17 @@ interface Schedule1Layout {
   line3: string; line5: string; line7: string; line8g: string; line9: string; line10: string;
   /** 2025 only: "repaid" checkbox and amount beside line 7. */
   repaidBox?: string; repaidAmount?: string;
-  line11: string; line15: string; line17: string; line18: string; line21: string; line25: string; line26: string;
+  line11: string; line15: string; line17: string; line18: string; line20: string; line21: string; line25: string; line26: string;
 }
 
 const S1: Record<number, Schedule1Layout> = {
   2023: { root: "form1[0]", line3: "P1.f1_06", line5: "P1.f1_08", line7: "P1.f1_10", line8g: "P1.f1_17", line9: "P1.f1_35", line10: "P1.f1_36",
-    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
+    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
   2024: { root: "form1[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_11", line8g: "P1.f1_18", line9: "P1.f1_37", line10: "P1.f1_38",
-    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
+    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
   2025: { root: "topmostSubform[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_12", line8g: "P1.f1_19", line9: "P1.f1_37", line10: "P1.f1_38",
     repaidBox: "P1.Line7_ReadOrder[0].c1_3", repaidAmount: "P1.Line7_ReadOrder[0].f1_11",
-    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line21: "P2.f2_13", line25: "P2.f2_29", line26: "P2.f2_30" },
+    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_29", line26: "P2.f2_30" },
 };
 
 /** "P1.f1_07" → "<root>.Page1[0].f1_07[0]". */
@@ -74,6 +74,7 @@ function schedule1(taxYear: number): FieldMap {
   add(F(L.line15), "line15", (x) => moneyOrBlank(x.schedule1.seTaxDeduction));
   add(F(L.line17), "line17", (x) => moneyOrBlank(x.schedule1.healthInsurance));
   add(F(L.line18), "line18", (x) => moneyOrBlank(x.schedule1.earlyWithdrawalPenalty));
+  add(F(L.line20), "line20", (x) => moneyOrBlank(x.schedule1.iraDeduction));
   add(F(L.line21), "line21", (x) => moneyOrBlank(x.schedule1.studentLoanInterest));
   add(F(L.line25), "line25", () => BLANK);
   add(F(L.line26), "line26", (x) => money(x.schedule1.adjustments));
@@ -81,19 +82,20 @@ function schedule1(taxYear: number): FieldMap {
 }
 
 interface Schedule2Layout {
-  /** Part I subtotal lines (blank) and line 3. */
-  partIBlank: string[]; line3: string;
+  /** Part I: the excess advance PTC repayment line (2023 line 2, 2024+ line 1a), the line 1
+   * subtotal (2024+ line 1z, same amount), and line 3. */
+  excessAptc: string; partISubtotal?: string; line3: string;
   line4: string; line4Boxes: string[];
   line7: string; line8: string; line8Box: string; line11: string; line12: string; line13: string; line18: string; line21: string;
 }
 
 const S2: Record<number, Schedule2Layout> = {
   // 2023: line 1 AMT, 2 excess APTC, 3 = 1 + 2.
-  2023: { partIBlank: [], line3: "P1.f1_05", line4: "P1.f1_06", line4Boxes: [],
+  2023: { excessAptc: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line4Boxes: [],
     line7: "P1.f1_09", line8: "P1.f1_10", line8Box: "P1.Line8_ReadOrder[0].c1_1", line11: "P1.f1_13", line12: "P1.f1_14", line13: "P1.f1_15", line18: "P2.f2_22", line21: "P2.f2_25" },
-  2024: { partIBlank: ["P1.f1_11"], line3: "P1.f1_13", line4: "P1.f1_14", line4Boxes: [],
+  2024: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", line3: "P1.f1_13", line4: "P1.f1_14", line4Boxes: [],
     line7: "P1.f1_17", line8: "P1.f1_18", line8Box: "P1.Line8_ReadOrder[0].c1_3", line11: "P1.f1_21", line12: "P1.f1_22", line13: "P1.f1_23", line18: "P2.f2_22", line21: "P2.f2_25" },
-  2025: { partIBlank: ["P1.f1_11"], line3: "P1.f1_13", line4: "P1.f1_15",
+  2025: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", line3: "P1.f1_13", line4: "P1.f1_15",
     line4Boxes: ["P1.Line4_ReadOrder[0].c1_3", "P1.Line4_ReadOrder[0].c1_4", "P1.Line4_ReadOrder[0].c1_5"],
     line7: "P1.f1_18", line8: "P1.f1_19", line8Box: "P1.Line8_ReadOrder[0].c1_6", line11: "P1.f1_22", line12: "P1.f1_23", line13: "P1.f1_24", line18: "P2.f2_21", line21: "P2.f2_24" },
 };
@@ -104,7 +106,8 @@ function schedule2(taxYear: number): FieldMap {
   const { add, build } = mapBuilder("f1040s2", taxYear);
   add(F("P1.f1_01"), "names", names);
   add(F("P1.f1_02"), "ssn", ssn);
-  L.partIBlank.forEach((f, i) => add(F(f), `partI.subtotal${i + 1}`, () => BLANK));
+  add(F(L.excessAptc), "excessAptc", (x) => moneyOrBlank(x.scheduleTwoPartOne));
+  if (L.partISubtotal) add(F(L.partISubtotal), "line1z", (x) => moneyOrBlank(x.scheduleTwoPartOne));
   add(F(L.line3), "line3", (x) => moneyOrBlank(x.scheduleTwoPartOne));
   L.line4Boxes.forEach((f, i) => add(F(f), `line4.box${i + 1}`, () => OFF));
   add(F(L.line4), "line4", (x) => moneyOrBlank(x.schedule2.seTax));
@@ -120,10 +123,10 @@ function schedule2(taxYear: number): FieldMap {
   return build();
 }
 
-const S3: Record<number, { line2: string; line3: string; line4: string; line7: string; line8: string; line11: string; line14: string; line15: string }> = {
-  2023: { line2: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line7: "P1.f1_25", line8: "P1.f1_26", line11: "P2.f2_03", line14: "P2.f2_16", line15: "P2.f2_17" },
-  2024: { line2: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line7: "P1.f1_25", line8: "P1.f1_26", line11: "P1.f1_29", line14: "P1.f1_38", line15: "P1.f1_39" },
-  2025: { line2: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line7: "P1.f1_24", line8: "P1.f1_25", line11: "P1.f1_28", line14: "P1.f1_36", line15: "P1.f1_37" },
+const S3: Record<number, { line2: string; line3: string; line4: string; line9: string; line7: string; line8: string; line11: string; line14: string; line15: string }> = {
+  2023: { line2: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line9: "P2.f2_01", line7: "P1.f1_25", line8: "P1.f1_26", line11: "P2.f2_03", line14: "P2.f2_16", line15: "P2.f2_17" },
+  2024: { line2: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line9: "P1.f1_27", line7: "P1.f1_25", line8: "P1.f1_26", line11: "P1.f1_29", line14: "P1.f1_38", line15: "P1.f1_39" },
+  2025: { line2: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line9: "P1.f1_26", line7: "P1.f1_24", line8: "P1.f1_25", line11: "P1.f1_28", line14: "P1.f1_36", line15: "P1.f1_37" },
 };
 
 function schedule3(taxYear: number): FieldMap {
@@ -137,6 +140,7 @@ function schedule3(taxYear: number): FieldMap {
   add(F(L.line4), "line4", (x) => moneyOrBlank(x.schedule3.saversCredit));
   add(F(L.line7), "line7", () => BLANK);
   add(F(L.line8), "line8", (x) => moneyOrBlank(x.scheduleThreeCredits));
+  add(F(L.line9), "line9", (x) => moneyOrBlank(x.schedule3.netPremiumTaxCredit));
   add(F(L.line11), "line11", (x) => moneyOrBlank(x.schedule3.excessSocialSecurity));
   add(F(L.line14), "line14", () => BLANK);
   add(F(L.line15), "line15", (x) => money(x.schedule3.otherPayments));
