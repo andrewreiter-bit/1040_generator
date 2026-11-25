@@ -17,7 +17,7 @@ import { FilingStatus } from "../faker/taxpayer";
  *   Refundable child tax credit per child: same Rev. Procs § 3.05 ($1,600 / $1,700 / $1,700).
  *   QBI threshold (§ 199A(e)(2)): Rev. Proc. 2022-38 § 3.27, 2023-34 § 3.27, 2024-40 § 3.27.
  *   Standard mileage rate: Notice 2023-03 (65.5¢), Notice 2024-08 (67¢), Notice 2025-5 (70¢).
- *   Saver's credit AGI limits: Form 8880 instructions for each year.
+ *   Saver's credit AGI limits and line 9 table: each year's Form 8880 (2023, 2024, 2025).
  *   Student loan interest phase-out (§ 221(b)(2)): Rev. Proc. 2022-38 § 3.29, 2023-34 § 3.29, 2024-40 § 3.29.
  *   Educator expenses (§ 62(d)(3)): $300 per eligible educator for 2023–2025.
  */
@@ -54,6 +54,11 @@ interface YearConstants {
   studentLoanPhaseoutStart: { joint: number; other: number };
   /** Form 8880 Saver's credit: no credit when AGI is over these. */
   saversCreditAgiLimit: { joint: number; hoh: number; other: number };
+  /**
+   * Form 8880 line 9 table: AGI not over [0] → 50%, [1] → 20%, [2] → 10% (then 0%).
+   * "other" is single, married filing separately and qualifying surviving spouse.
+   */
+  saversCreditBrackets: { joint: [number, number, number]; hoh: [number, number, number]; other: [number, number, number] };
 }
 
 const RATES = [0.10, 0.12, 0.22, 0.24, 0.32, 0.35, 0.37];
@@ -81,6 +86,7 @@ const YEARS: Record<number, YearConstants> = {
     qbiThreshold: { joint: 364200, other: 182100 },
     standardMileageRate: 0.655,
     saversCreditAgiLimit: { joint: 73000, hoh: 54750, other: 36500 },
+    saversCreditBrackets: { joint: [43500, 47500, 73000], hoh: [32625, 35625, 54750], other: [21750, 23750, 36500] },
     studentLoanPhaseoutStart: { joint: 155000, other: 75000 },
   },
   2024: {
@@ -105,6 +111,7 @@ const YEARS: Record<number, YearConstants> = {
     qbiThreshold: { joint: 383900, other: 191950 },
     standardMileageRate: 0.67,
     saversCreditAgiLimit: { joint: 76500, hoh: 57375, other: 38250 },
+    saversCreditBrackets: { joint: [46000, 50000, 76500], hoh: [34500, 37500, 57375], other: [23000, 25000, 38250] },
     studentLoanPhaseoutStart: { joint: 165000, other: 80000 },
   },
   2025: {
@@ -129,6 +136,7 @@ const YEARS: Record<number, YearConstants> = {
     qbiThreshold: { joint: 394600, other: 197300 },
     standardMileageRate: 0.70,
     saversCreditAgiLimit: { joint: 79000, hoh: 59250, other: 39500 },
+    saversCreditBrackets: { joint: [47500, 51000, 79000], hoh: [35625, 38250, 59250], other: [23750, 25500, 39500] },
     studentLoanPhaseoutStart: { joint: 170000, other: 85000 },
   },
 };
@@ -241,9 +249,17 @@ export function additionalStandardDeduction(taxYear: number, status: FilingStatu
   return isMarriedStatus(status) ? a.married : a.unmarried;
 }
 
+/** Form 8880 table column: MFJ, HOH, or everyone else (single, MFS and QSS share a column). */
+const saversColumn = (status: FilingStatus) => (status === "MFJ" ? "joint" : status === "HOH" ? "hoh" : "other");
+
 export function saversCreditAgiLimit(taxYear: number, status: FilingStatus): number {
-  const l = yearConstants(taxYear).saversCreditAgiLimit;
-  return status === "MFJ" || status === "QSS" ? l.joint : status === "HOH" ? l.hoh : l.other;
+  return yearConstants(taxYear).saversCreditAgiLimit[saversColumn(status)];
+}
+
+/** Form 8880 line 9: the credit rate for this AGI (0.5, 0.2, 0.1 or 0). */
+export function saversCreditRate(taxYear: number, status: FilingStatus, agi: number): number {
+  const [fifty, twenty, ten] = yearConstants(taxYear).saversCreditBrackets[saversColumn(status)];
+  return agi <= fifty ? 0.5 : agi <= twenty ? 0.2 : agi <= ten ? 0.1 : 0;
 }
 
 export function ssWageBase(taxYear: number): number {

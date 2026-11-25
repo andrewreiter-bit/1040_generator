@@ -16,7 +16,6 @@ import fs from "fs";
 import path from "path";
 import { CapitalAssetSale, Dependent, DistributionCode, FakeTaxpayer, FilingStatus, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
-import { saversCreditAgiLimit } from "../config/tax-year";
 import { isQualifyingChild } from "../tax/household";
 
 type Json = unknown;
@@ -113,6 +112,7 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS1040", element: "TaxableIRAAmt", label: "1040 4b", pick: (r) => [r.retirement.line4b] },
   { form: "IRS1040", element: "TaxablePensionsAmt", label: "1040 5b", pick: (r) => [r.retirement.line5b] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
+  { form: "IRS8880", element: "CrQualifiedRetirementSavAmt", label: "8880 12", pick: (r) => (r.form8880 ? [r.form8880.line12] : []) },
   { form: "IRS8995A", element: "TotalQBIComponentAmt", label: "8995-A 16", pick: (r) => (r.form8995A ? [r.form8995A.line16] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
   { form: "IRS1040ScheduleD", element: "NetLTCapitalGainOrLossAmt", label: "Sch D 15", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line15] : []) },
@@ -184,6 +184,8 @@ const SUPPORTED_PATHS: RegExp[] = [
   // SSA-1099. Medicare / drug premiums matter only when itemizing (no bench case itemizes).
   /^ssa_1099\.ssa_1099_grp\[\]\.ssa_(who_applies_to|net_benefits|federal_withholding|medicare_premiums|prescription_drug_premiums)$/,
   /^irs1040\.(tp_blind|sp_blind)$/,
+  // Full-time student: no Saver's credit for that person (Form 8880).
+  /^irs1040\.(tp_student|sp_student)$/,
   // Schedule 1: unemployment (1099-G), educator expenses, student loan interest.
   /^irs1040_schedule1\.irs1099_g\[\]\.(g_payer_\w+|g_who_applies_to|g_unemployment_comp|g_fed_wh|g_amount_repaid_current_year)$/,
   /^irs1040_schedule1\.irs1099_g\[\]\.irs1099_g_state\[\]\.\w+$/,
@@ -198,7 +200,7 @@ const SUPPORTED_PATHS: RegExp[] = [
 /** W-2 box 12 codes that are uncollected tax (Schedule 2 line 13). */
 const UNCOLLECTED_BOX12 = new Set(["A", "B", "M", "N"]);
 
-/** W-2 box 12 elective deferrals: no effect on the scored lines unless the Saver's credit (Form 8880) applies. */
+/** W-2 box 12 elective deferrals (Form 8880 line 2). */
 const RETIREMENT_BOX12 = new Set(["D", "E", "F", "G", "H", "S", "AA", "BB", "EE"]);
 
 /** W-2 box 12 codes that never change the scored 1040 lines. */
@@ -249,12 +251,11 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   const rd = root.return_data as Record<string, unknown>;
   const outOfScope = new Set<string>();
   const postChecks: Conversion["postChecks"] = [];
-  let retirementDeferral = false;
 
   for (const [p, v] of leaves(rd)) {
     if (p === "w2[].employers_use_grp[].box_12_code") {
-      if (RETIREMENT_BOX12.has(String(v))) retirementDeferral = true;
-      else if (!NEUTRAL_BOX12.has(String(v)) && !UNCOLLECTED_BOX12.has(String(v))) outOfScope.add(`W-2 box 12 code ${v}`);
+      const code = String(v);
+      if (!RETIREMENT_BOX12.has(code) && !NEUTRAL_BOX12.has(code) && !UNCOLLECTED_BOX12.has(code)) outOfScope.add(`W-2 box 12 code ${code}`);
       continue;
     }
     if (p === "w2[].employers_use_grp[].box_12_amount") continue;
@@ -312,7 +313,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       employee: val(w, "who_applies_to") === "spouse" ? "spouse" : "primary",
       box12: list(w, "employers_use_grp")
         .map((e) => ({ code: String(val(e, "box_12_code") ?? ""), amount: num(val(e, "box_12_amount")) }))
-        .filter((e) => UNCOLLECTED_BOX12.has(e.code)),
+        .filter((e) => UNCOLLECTED_BOX12.has(e.code) || RETIREMENT_BOX12.has(e.code)),
     };
   });
 
@@ -474,12 +475,6 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       + list(c, "irs1099_k").reduce((a: number, x) => a + num(val(x, "k_fed_wh")), 0)
       + list(c, "irs1099_misc").reduce((a: number, x) => a + num(val(x, "misc_fed_wh")), 0), 0);
 
-  if (retirementDeferral) {
-    postChecks.push((r) => {
-      const limit = saversCreditAgiLimit(taxYear, status ?? "Single");
-      return r.agi <= limit ? `W-2 elective deferral with AGI ≤ ${limit} (Saver's credit, Form 8880)` : undefined;
-    });
-  }
 
   const estimated =
     [1, 2, 3, 4].reduce((s, q) => s + num(val(f1040, `estimated_tax_payment_${q}`)), 0) +
@@ -549,6 +544,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     capitalLossCarryover,
     ssa1099s,
     retirement1099Rs: retirement1099Rs.length ? retirement1099Rs : undefined,
+    fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
+      ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }
+      : undefined,
     alaskaPermanentFundDividends: {
       primary: num(val(schedule1, "alaska_permanent_dividend_tp_input")) || undefined,
       spouse: num(val(schedule1, "alaska_permanent_dividend_sp_input")) || undefined,

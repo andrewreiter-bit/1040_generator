@@ -9,7 +9,7 @@ import {
 } from "./taxpayer";
 import { ALASKA_PFD, ssWageBase } from "./tax-year";
 import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "./schedule-c";
-import { buildRetirement1099Rs } from "./retirement";
+import { addRetirementSavings, buildRetirement1099Rs } from "./retirement";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -254,6 +254,8 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   }
   // Car loan interest / personal property tax on the business vehicle (last draws; line 31 unchanged).
   if (taxpayer.scheduleCs?.length) addVehicleCosts(faker, taxpayer.scheduleCs[0], taxYear);
+  // 401(k) deferrals (W-2 box 12 code D) and Roth IRA contributions for Form 8880 (last draws).
+  addRetirementSavings(faker, taxpayer, ssWageBase(taxYear));
   return taxpayer;
 }
 

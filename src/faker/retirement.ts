@@ -99,3 +99,53 @@ export function buildRetirement1099Rs(faker: Faker, t: FakeTaxpayer): Retirement
   }
   return out;
 }
+
+/** § 402(g) elective deferral limit and the age-50 catch-up (IRS cost-of-living notices). */
+const DEFERRAL_LIMIT: Record<number, number> = { 2023: 22500, 2024: 23000, 2025: 23500 };
+const DEFERRAL_CATCH_UP = 7500;
+/** IRA contribution limit and the age-50 catch-up. */
+const IRA_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000 };
+const IRA_CATCH_UP = 1000;
+/** Draw Roth contributions only well below the Roth IRA income phase-out (it starts at $138,000 / $218,000 joint for 2023). */
+const ROTH_INCOME_CEILING = { joint: 190000, other: 120000 };
+
+/**
+ * After every other draw: about 40% of W-2s show a 401(k) elective deferral (box 12 code D).
+ * The § 402(g) limit is per person across all employers, so later W-2s get only what's left.
+ * Box 1 stays as drawn (wages already net of the deferral); boxes 3 and 5 rise by the
+ * deferral (box 3 up to the wage base) and boxes 4 and 6 are refigured at 6.2% / 1.45%.
+ * About 10% of people on the return also contribute to a Roth IRA, but only in households
+ * whose drawn income is well under the Roth phase-out, and never on a separate return by
+ * someone who lived with their spouse (their phase-out range is $0–$10,000; Pub 590-A).
+ * Both feed Form 8880.
+ */
+export function addRetirementSavings(faker: Faker, t: FakeTaxpayer, ssWageBase: number): void {
+  const birthYear = (dob: string | null) => (dob ? Number(dob.split("/")[2]) : t.taxYear);
+  const age = (who: "primary" | "spouse") => t.taxYear - birthYear(who === "spouse" ? t.spouseDateOfBirth : t.dateOfBirth);
+  const remaining: Record<"primary" | "spouse", number> = {
+    primary: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("primary") >= 50 ? DEFERRAL_CATCH_UP : 0),
+    spouse: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("spouse") >= 50 ? DEFERRAL_CATCH_UP : 0),
+  };
+  for (const w of t.w2Records) {
+    if (!faker.datatype.boolean({ probability: 0.4 })) continue;
+    const who = w.employee ?? "primary";
+    const drawn = round2(w.wages * faker.number.float({ min: 0.02, max: 0.12, fractionDigits: 3 }));
+    const deferral = Math.min(remaining[who], drawn);
+    if (deferral <= 0) continue;
+    remaining[who] = round2(remaining[who] - deferral);
+    w.box12 = [...(w.box12 ?? []), { code: "D", amount: deferral }];
+    w.socialSecurityWages = Math.min(ssWageBase, round2(w.socialSecurityWages + deferral));
+    w.medicareWages = round2(w.medicareWages + deferral);
+    w.ssWithheld = round2(w.socialSecurityWages * 0.062);
+    w.medicareWithheld = round2(w.medicareWages * 0.0145);
+  }
+  const income = t.totalWages + Math.max(0, t.businessIncome ?? 0);
+  const ceiling = t.filingStatus === "MFJ" ? ROTH_INCOME_CEILING.joint : ROTH_INCOME_CEILING.other;
+  const people: Array<"primary" | "spouse"> = t.filingStatus === "MFJ" ? ["primary", "spouse"] : ["primary"];
+  for (const who of people) {
+    const mfsTogether = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false;
+    if (!faker.datatype.boolean({ probability: 0.1 }) || income > ceiling || mfsTogether) continue;
+    const max = (IRA_LIMIT[t.taxYear] ?? 7000) + (age(who) >= 50 ? IRA_CATCH_UP : 0);
+    t.rothIraContributions = { ...(t.rothIraContributions ?? {}), [who]: round2(Math.min(max, dollars(faker, 500, max))) };
+  }
+}
