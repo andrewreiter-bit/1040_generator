@@ -27,7 +27,7 @@ import {
 } from "../config/tax-year";
 import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount } from "./household";
 import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
-import {
+import { QbiRow,
   BusinessDeductions, Form8995ALines, Form8995Lines, ScheduleCLines, ScheduleSELines,
   businessDeductions, form8995, form8995A, includedScheduleCs, scheduleC, scheduleSE,
 } from "./business";
@@ -37,7 +37,7 @@ import { CapitalResult, computeCapital } from "./capital";
 import { ScheduleALines, scheduleA } from "./itemized";
 import { Form4952Lines, form4952 } from "./investment-interest";
 import { ScheduleELines, scheduleE } from "./rental";
-import { Form8582Lines, form8582 } from "./passive";
+import { Form8582Lines, PassiveClass, form8582, isRoyalty, isSelfRental, passiveClass } from "./passive";
 import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
 import { RetirementLines, retirementDistributions } from "./retirement";
 import { Form8880Lines, form8880 } from "./savers-credit";
@@ -257,7 +257,6 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const schEBase = t.rentals?.length ? scheduleE(t.rentals, R) : undefined;
   if ((schEBase?.columns.length ?? 0) > 3) unsupported.push("more than three rental properties (Schedule E continuation page)");
   if (t.rentals?.some((p) => p.priorYearUnallowedLoss)) unsupported.push("prior-year unallowed passive losses (Form 8582 line 1c)");
-  if (t.rentals?.some((p) => p.activeParticipation === false)) unsupported.push("rental without active participation (Form 8582 Part V)");
   if (t.socialSecurityBenefits != null && !t.ssa1099s?.length) {
     unsupported.push("Social Security benefits given only as a net figure (no SSA-1099 detail)");
   }
@@ -301,16 +300,31 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // interest deductions (net passive income, when there is any, stays in).
   let f8582: Form8582Lines | undefined;
   let schE = schEBase;
+  let rentalClasses: PassiveClass[] = [];
+  const reProMp = (p: NonNullable<FakeTaxpayer["rentals"]>[number]) => !!t.realEstateProfessional && !!p.materialParticipation && !isRoyalty(p);
   if (schEBase) {
-    const nets = schEBase.columns.map((c) => c.net);
-    const netPassive = sum(nets);
+    rentalClasses = schEBase.columns.map((c) => passiveClass(t, c.property, c.net));
+    // Line 6: passive activity losses and a real estate professional's rental losses are left out;
+    // net passive income and other nonpassive results (self-rental income, portfolio royalties) stay in.
+    const passiveNet = sum(schEBase.columns.filter((_, i) => rentalClasses[i] !== "nonpassive").map((c) => c.net));
+    const nonpassiveNet = sum(schEBase.columns.filter((c, i) => rentalClasses[i] === "nonpassive" && !(reProMp(c.property) && c.net < 0)).map((c) => c.net));
     const modifiedAgi = round2(
-      wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + businessIncome + unemployment + otherIncome + Math.max(0, netPassive)
+      wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + businessIncome + unemployment + otherIncome + Math.max(0, passiveNet) + nonpassiveNet
       - (educatorExpenses + hsaDeduction + healthInsurance + earlyWithdrawalPenalty),
     );
-    f8582 = form8582(t, nets, modifiedAgi, R);
+    f8582 = form8582(t, schEBase.columns.map((c, i) => ({ net: c.net, cls: rentalClasses[i] })), modifiedAgi, R);
     schE = scheduleE(t.rentals!, R, f8582.activities.map((a) => a.allowed));
+    if (t.realEstateProfessional) schE = { ...schE, line43: sum(schE.columns.filter((c) => reProMp(c.property)).map((c) => c.net)) };
+    if (t.rentals!.some((p) => isRoyalty(p) && p.qbi)) unsupported.push("royalties treated as a § 199A trade or business");
   }
+  /** Each column's result on the return: income, or the loss allowed after Form 8582. */
+  const rentalResult = (i: number) => { const c = schE!.columns[i]; return c.net > 0 ? c.net : c.deductibleLoss; };
+  // Net investment income from Schedule E (Form 8960 line 4a). Excluded as derived in the ordinary
+  // course of a trade or business: self-rental income recharacterized as nonpassive (Reg.
+  // 1.1411-4(g)(6)) and a real estate professional's materially participated rentals (the
+  // (g)(7) safe harbor, taking material participation as its 500 hours).
+  const niiRental = schE ? sum(schE.columns.map((c, i) =>
+    (isSelfRental(c.property) && rentalClasses[i] === "nonpassive") || reProMp(c.property) ? 0 : rentalResult(i))) : 0;
   const rentalIncome = schE?.line26 ?? 0;
   const additionalIncome = round2(businessIncome + rentalIncome + unemployment + otherIncome);
   // Lines 6a/6b: the worksheet uses every other income line and the adjustments other than
@@ -394,15 +408,29 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const additionalDeductions = schedule1A?.line38 ?? 0;
   let qbi: Form8995Lines | undefined;
   // Only qualified trades or businesses enter Forms 8995 / 8995-A (each keeps its Schedule C index).
-  const qbiIdx = scheduleCs.map((_, i) => i).filter((i) => !scheduleCs[i].business.notQualifiedForQbi);
-  const qbiAmounts = qbiIdx.map((i) => bizDed.qbiByBusiness[i]);
-  if (qbiIdx.length || t.priorYearQbiLoss) {
+  const qbiRows: QbiRow[] = scheduleCs.map((c, i) => ({ c, i })).filter(({ c }) => !c.business.notQualifiedForQbi).map(({ c, i }) => ({
+    name: c.business.businessName || c.business.principalBusiness,
+    tin: c.business.ein || (c.owner === "spouse" ? t.spouseSSN ?? "" : t.ssn),
+    qbi: bizDed.qbiByBusiness[i], w2Wages: c.business.w2WagesPaid ?? 0, ubia: c.business.ubia ?? 0, sstb: !!c.business.sstb,
+    source: { kind: "scheduleC", index: i },
+  }));
+  // Rentals treated as § 199A trades or businesses: the allowed result is QBI (a loss suspended
+  // by Form 8582 isn't QBI this year). No W-2 wages or UBIA are modelled for rentals.
+  (schE?.columns ?? []).forEach((c, i) => {
+    if (!c.property.qbi || isRoyalty(c.property)) return;
+    const who = c.property.owner === "spouse" ? "spouse" : "primary";
+    qbiRows.push({
+      name: `Rental: ${c.property.address.split(",")[0]}`, tin: who === "spouse" ? t.spouseSSN ?? "" : t.ssn,
+      qbi: rentalResult(i), w2Wages: 0, ubia: 0, sstb: false, source: { kind: "rental", index: i },
+    });
+  });
+  if (qbiRows.length || t.priorYearQbiLoss) {
     // Form 8995 line 11: taxable income before the QBI deduction (2025: after line 13b).
-    qbi = form8995(qbiAmounts, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R, qbiIdx);
+    qbi = form8995(qbiRows, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R);
   }
   // Above the threshold: Form 8995-A (W-2 wage / UBIA limit, SSTB phase-out, loss netting).
   const f8995a = qbi?.overThreshold
-    ? form8995A(qbiIdx.map((i) => scheduleCs[i]), qbiAmounts, qbi.taxableIncomeBeforeQbi, qbi.netCapitalGain, t, R, qbiIdx)
+    ? form8995A(qbiRows, qbi.taxableIncomeBeforeQbi, qbi.netCapitalGain, t, R)
     : undefined;
   const qbiDeduction = f8995a ? f8995a.line39 : qbi ? qbi.deduction : 0;
   const totalDeductions = round2(deduction + qbiDeduction + additionalDeductions);
@@ -460,7 +488,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   // ── Schedule 2 Part II ────────────────────────────────────────────────────
   const f8959 = form8959(t.filingStatus, w2s, scheduleSEs, R);
-  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0);
+  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0, round2(niiRental - rentalIncome));
   const seTax = sum(scheduleSEs.map((s) => s.seTax));
   const earlyDistributionTax = retirement.additionalTax;
   // Line 13 (Schedule 2 instructions): "box 12 of Form W-2 with codes A and B or M and N".

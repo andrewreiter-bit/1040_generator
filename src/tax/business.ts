@@ -157,9 +157,23 @@ export function businessDeductions(cs: ScheduleCLines[], ses: ScheduleSELines[],
   return { seDeductionByBusiness, healthInsuranceByBusiness, healthInsuranceTotal: sum(healthInsuranceByBusiness), qbiByBusiness };
 }
 
+/**
+ * One qualified trade or business on Form 8995 line 1 / Form 8995-A line 1: a Schedule C
+ * business, or a Schedule E rental treated as a § 199A trade or business.
+ */
+export interface QbiRow {
+  name: string;                 // line 1 (a)
+  tin: string;                  // line 1 (b)
+  qbi: number;                  // line 1 (c) / Form 8995-A Schedule C (a)
+  w2Wages: number;
+  ubia: number;
+  sstb: boolean;
+  source: { kind: "scheduleC" | "rental"; index: number };
+}
+
 export interface Form8995Lines {
-  /** Schedule C index of each line 1 row (qualified trades or businesses only). */
-  businessIndex: number[];
+  /** Line 1 rows (qualified trades or businesses only). */
+  rows: QbiRow[];
   qbiByBusiness: number[];      // 1c
   totalQbi: number;             // 2
   priorYearLoss: number;        // 3 (≤ 0)
@@ -177,10 +191,10 @@ export interface Form8995Lines {
 }
 
 export function form8995(
-  qbiByBusiness: number[], taxableIncomeBeforeQbi: number, netCapitalGain: number, t: FakeTaxpayer, R: Rounder,
-  businessIndex: number[] = qbiByBusiness.map((_, i) => i),
+  rows: QbiRow[], taxableIncomeBeforeQbi: number, netCapitalGain: number, t: FakeTaxpayer, R: Rounder,
 ): Form8995Lines {
   const sum = (xs: number[]) => sumWith(R, xs);
+  const qbiByBusiness = rows.map((x) => x.qbi);
   const thr = yearConstants(t.taxYear).qbiThreshold;
   const threshold = t.filingStatus === "MFJ" ? thr.joint : thr.other;
   const totalQbi = sum(qbiByBusiness);
@@ -193,7 +207,7 @@ export function form8995(
   const incomeLimitation = R(reducedTaxableIncome * QBI_RATE);
   const deduction = Math.min(combinedComponent, incomeLimitation);
   return {
-    businessIndex, qbiByBusiness, totalQbi, priorYearLoss, netQbi, qbiComponent, combinedComponent,
+    rows, qbiByBusiness, totalQbi, priorYearLoss, netQbi, qbiComponent, combinedComponent,
     taxableIncomeBeforeQbi, netCapitalGain, reducedTaxableIncome, incomeLimitation, deduction,
     lossCarryforward: Math.min(0, combined),
     overThreshold: taxableIncomeBeforeQbi > threshold,
@@ -203,7 +217,7 @@ export function form8995(
 // ── Form 8995-A (taxable income above the § 199A threshold) ─────────────────
 
 export interface Form8995ABusiness {
-  index: number;               // into the Schedule C list
+  row: QbiRow;
   sstb: boolean;
   /** Schedule A: applicable percentage (1 below the range, 0 above it) — SSTBs only. */
   applicablePct: number;
@@ -240,10 +254,7 @@ export interface Form8995ALines {
  * No REIT/PTP income, aggregation (Schedule B) or cooperative patronage (Schedule D).
  */
 export function form8995A(
-  cs: ScheduleCLines[], qbiByBusiness: number[], taxableIncomeBeforeQbi: number, netCapitalGain: number,
-  t: FakeTaxpayer, R: Rounder,
-  /** Schedule C index of each entry in `cs` (when `cs` holds only the qualified businesses). */
-  indexes: number[] = cs.map((_, i) => i),
+  rows: QbiRow[], taxableIncomeBeforeQbi: number, netCapitalGain: number, t: FakeTaxpayer, R: Rounder,
 ): Form8995ALines {
   const sum = (xs: number[]) => sumWith(R, xs);
   const joint = t.filingStatus === "MFJ";
@@ -256,15 +267,15 @@ export function form8995A(
   const pctSstb = ti <= threshold ? 1 : ti >= threshold + range ? 0 : 1 - over / range;
 
   // Schedule A: SSTB amounts at the applicable percentage.
-  const base = cs.map((c, i) => {
-    const sstb = !!c.business.sstb;
+  const base = rows.map((row) => {
+    const sstb = row.sstb;
     const pct = sstb ? pctSstb : 1;
     return {
-      index: indexes[i], sstb, applicablePct: pct,
-      rawQbi: R(qbiByBusiness[i]), rawW2: R(c.business.w2WagesPaid ?? 0), rawUbia: R(c.business.ubia ?? 0),
-      qbi: R(qbiByBusiness[i] * pct),
-      w2: R((c.business.w2WagesPaid ?? 0) * pct),
-      ubia: R((c.business.ubia ?? 0) * pct),
+      row, sstb, applicablePct: pct,
+      rawQbi: R(row.qbi), rawW2: R(row.w2Wages), rawUbia: R(row.ubia),
+      qbi: R(row.qbi * pct),
+      w2: R(row.w2Wages * pct),
+      ubia: R(row.ubia * pct),
     };
   });
 
@@ -294,7 +305,7 @@ export function form8995A(
     }
     const line13 = ti <= threshold ? l3 : Math.max(line11, line12);
     return {
-      index: b.index, sstb: b.sstb, applicablePct: b.applicablePct, rawQbi: b.rawQbi, rawW2: b.rawW2, rawUbia: b.rawUbia, qbi: b.qbi, lossNetting: netting[i], line2, line3: l3,
+      row: b.row, sstb: b.sstb, applicablePct: b.applicablePct, rawQbi: b.rawQbi, rawW2: b.rawW2, rawUbia: b.rawUbia, qbi: b.qbi, lossNetting: netting[i], line2, line3: l3,
       line4: line4w, line5, line6, line7, line8, line9, line10, line11, partIII, line12, line13, line15: line13,
     };
   });

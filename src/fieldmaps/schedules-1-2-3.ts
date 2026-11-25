@@ -173,13 +173,10 @@ function form8995(taxYear: number): FieldMap {
   for (let i = 0; i < FORM_8995_ROWS; i++) {
     const row = `${P1}Table[0].${ROW[i]}[0].`;
     const n = 3 + i * 3;
-    const biz = (x: ReturnLines) => (q(x) && i < q(x)!.businessIndex.length ? x.scheduleC[q(x)!.businessIndex[i]] : undefined);
-    add(`${row}${fn(n)}`, `line1.${i + 1}.name`, (x) =>
-      biz(x) ? biz(x)!.business.businessName || biz(x)!.business.principalBusiness : BLANK, true);
-    add(`${row}${fn(n + 1)}`, `line1.${i + 1}.tin`, (x, t) =>
-      biz(x) ? biz(x)!.business.ein || personSsn(t, biz(x)!.owner) : BLANK, true);
-    add(`${row}${fn(n + 2)}`, `line1.${i + 1}.qbi`, (x) =>
-      biz(x) ? money(q(x)!.qbiByBusiness[i]) : BLANK);
+    const biz = (x: ReturnLines) => q(x)?.rows[i];
+    add(`${row}${fn(n)}`, `line1.${i + 1}.name`, (x) => biz(x)?.name ?? BLANK, true);
+    add(`${row}${fn(n + 1)}`, `line1.${i + 1}.tin`, (x) => biz(x)?.tin ?? BLANK, true);
+    add(`${row}${fn(n + 2)}`, `line1.${i + 1}.qbi`, (x) => (biz(x) ? money(biz(x)!.qbi) : BLANK));
   }
   add(`${P1}${y25 ? "Line2_ReadOrder" : "ReadOrderSubForm"}[0].f1_18[0]`, "line2", (x) => money(q(x)!.totalQbi));
   add(`${P1}f1_19[0]`, "line3", (x) => moneyOrBlank(q(x)!.priorYearLoss), true);
@@ -244,17 +241,20 @@ function form8960(taxYear: number): FieldMap {
   add(f(4), "line2", (x) => moneyOrBlank(x.ordinaryDividends));
   add(f(5), "line3", () => BLANK);                                        // annuities: none
   add(f(6), "line4a", (x) => moneyOrBlank(m(x).rentalIncome));             // rental real estate (Schedule E)
-  add(f(7), "line4b", () => BLANK);
-  add(f(8), "line4c", (x) => moneyOrBlank(m(x).rentalIncome));
+  add(f(7), "line4b", (x) => moneyOrBlank(m(x).rentalAdjustment));      // non-section 1411 trade or business
+  add(f(8), "line4c", (x) => moneyOrBlank(m(x).line4c));
   add(f(9), "line5a", (x) => moneyOrBlank(x.capitalGain));
   add(f(10), "line5b", () => BLANK);
   add(f(11), "line5c", () => BLANK);
   add(f(12), "line5d", (x) => moneyOrBlank(x.capitalGain));
   add(f(13), "line6", () => BLANK);
   add(f(14), "line7", () => BLANK);
-  add(f(15), "line8", (x) => money(x.taxableInterest + x.ordinaryDividends + m(x).rentalIncome + x.capitalGain));
-  for (const n of [16, 17, 18, 19, 20]) add(f(n), `partII.f1_${n}`, () => BLANK);
-  add(f(21), "line11", () => BLANK);
+  add(f(15), "line8", (x) => money(x.taxableInterest + x.ordinaryDividends + m(x).line4c + x.capitalGain));
+  add(f(16), "line9a", (x) => moneyOrBlank(m(x).investmentInterest));       // Form 4952 line 8
+  for (const n of [17, 18]) add(f(n), `partII.f1_${n}`, () => BLANK);       // 9b state tax, 9c misc.
+  add(f(19), "line9d", (x) => moneyOrBlank(m(x).investmentInterest));
+  add(f(20), "line10", () => BLANK);
+  add(f(21), "line11", (x) => moneyOrBlank(m(x).totalDeductions));
   add(f(22), "line12", (x) => money(m(x).netInvestmentIncome));
   add(f(23), "line13", (x) => money(m(x).modifiedAgi));
   add(f(24), "line14", (x) => money(m(x).threshold));

@@ -56,7 +56,12 @@ export function form8959(status: FilingStatus, w2s: W2Record[], ses: ScheduleSEL
 }
 
 export interface Form8960Lines {
-  rentalIncome: number;         // 4a / 4c (Schedule E line 26)
+  rentalIncome: number;         // 4a (Schedule E line 26)
+  /** 4b: Schedule E results derived in the ordinary course of a non-section 1411 trade or business (removed). */
+  rentalAdjustment: number;
+  line4c: number;               // 4a + 4b
+  investmentInterest: number;   // 9a (Form 4952 line 8, when itemized)
+  totalDeductions: number;      // 11
   netInvestmentIncome: number;  // 12
   modifiedAgi: number;          // 13
   threshold: number;            // 14
@@ -68,13 +73,18 @@ export interface Form8960Lines {
  * Form 8960 for interest, dividends, rental income and net capital gain (the investment income the
  * model carries), less line 9a investment interest (the Form 4952 deduction taken on Schedule A).
  */
-export function form8960(status: FilingStatus, agi: number, interest: number, dividends: number, capitalGain: number, R: Rounder, rentalIncome = 0, investmentInterest = 0): Form8960Lines {
+export function form8960(
+  status: FilingStatus, agi: number, interest: number, dividends: number, capitalGain: number, R: Rounder,
+  rentalIncome = 0, investmentInterest = 0, rentalAdjustment = 0,
+): Form8960Lines {
   const t = NIIT.threshold;
   const threshold = status === "MFJ" || status === "QSS" ? t.joint : status === "MFS" ? t.mfs : t.other;
-  const netInvestmentIncome = Math.max(0, R(interest + dividends + rentalIncome + capitalGain - investmentInterest));
+  const line4c = R(rentalIncome + rentalAdjustment);
+  const totalDeductions = R(investmentInterest);
+  const netInvestmentIncome = Math.max(0, R(interest + dividends + line4c + capitalGain - totalDeductions));
   const agiOverThreshold = Math.max(0, R(agi - threshold));
   const tax = R(Math.min(netInvestmentIncome, agiOverThreshold) * NIIT.rate);
-  return { rentalIncome, netInvestmentIncome, modifiedAgi: agi, threshold, agiOverThreshold, tax };
+  return { rentalIncome, rentalAdjustment: R(rentalAdjustment), line4c, investmentInterest: R(investmentInterest), totalDeductions, netInvestmentIncome, modifiedAgi: agi, threshold, agiOverThreshold, tax };
 }
 
 /**

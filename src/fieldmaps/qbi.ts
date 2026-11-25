@@ -31,11 +31,11 @@ function form8995A(taxYear: number): FieldMap {
   add(`${P1}f1_02[0]`, "ssn", (r, t) => (a(r) ? t.ssn : BLANK), true);
   for (let c = 0; c < 3; c++) {
     const row = `${P1}Table_PartI[0].Row${ROW[c]}[0].`;
-    const biz = (r: ReturnLines) => (col(r, c) ? r.scheduleC[col(r, c)!.index] : undefined);
-    add(`${row}f1_${pad(3 + 2 * c)}[0]`, `line1.${ROW[c]}.name`, (r) => (biz(r) ? biz(r)!.business.businessName || biz(r)!.business.principalBusiness : BLANK), true);
+    const biz = (r: ReturnLines) => col(r, c)?.row;
+    add(`${row}f1_${pad(3 + 2 * c)}[0]`, `line1.${ROW[c]}.name`, (r) => biz(r)?.name ?? BLANK, true);
     add(`${row}c1_${1 + 3 * c}[0]`, `line1.${ROW[c]}.sstb`, (r) => checkIf(!!col(r, c)?.sstb));
     add(`${row}c1_${2 + 3 * c}[0]`, `line1.${ROW[c]}.aggregation`, () => OFF);
-    add(`${row}f1_${pad(4 + 2 * c)}[0]`, `line1.${ROW[c]}.tin`, (r, t) => (biz(r) ? biz(r)!.business.ein || personSsn(t, biz(r)!.owner) : BLANK), true);
+    add(`${row}f1_${pad(4 + 2 * c)}[0]`, `line1.${ROW[c]}.tin`, (r) => biz(r)?.tin ?? BLANK, true);
     add(`${row}c1_${3 + 3 * c}[0]`, `line1.${ROW[c]}.patron`, () => OFF);
 
     const L2: Array<[number, (b: Form8995ABusiness) => string]> = [
@@ -112,9 +112,9 @@ function scheduleA8995A(taxYear: number): FieldMap {
   add(`${P1}${f(2)}[0]`, "ssn", (r, t) => (a(r) ? t.ssn : BLANK), true);
   for (let c = 0; c < 3; c++) {
     const b = (r: ReturnLines) => sstbs(r)[c];
-    const biz = (r: ReturnLines) => (b(r) ? r.scheduleC[b(r)!.index] : undefined);
-    add(`${T}Row1a[0].${f(3 + c)}[0]`, `line1a.${COL[c]}`, (r) => (biz(r) ? biz(r)!.business.businessName || biz(r)!.business.principalBusiness : BLANK), true);
-    add(`${T}Row1b[0].${f(6 + c)}[0]`, `line1b.${COL[c]}`, (r, t) => (biz(r) ? biz(r)!.business.ein || personSsn(t, biz(r)!.owner) : BLANK), true);
+    const biz = (r: ReturnLines) => b(r)?.row;
+    add(`${T}Row1a[0].${f(3 + c)}[0]`, `line1a.${COL[c]}`, (r) => biz(r)?.name ?? BLANK, true);
+    add(`${T}Row1b[0].${f(6 + c)}[0]`, `line1b.${COL[c]}`, (r) => biz(r)?.tin ?? BLANK, true);
     add(`${T}Row2[0].${f(9 + c)}[0]`, `line2.${COL[c]}`, (r) => (b(r) ? money(b(r)!.rawQbi) : BLANK));
     add(`${T}Row3[0].${f(12 + c)}[0]`, `line3.${COL[c]}`, (r) => (b(r) ? money(b(r)!.rawW2) : BLANK));
     add(`${T}Row4[0].${f(15 + c)}[0]`, `line4.${COL[c]}`, (r) => (b(r) ? money(b(r)!.rawUbia) : BLANK));
@@ -164,7 +164,7 @@ function scheduleC8995A(taxYear: number): FieldMap {
     const b = (r: ReturnLines) => c8(r)?.businesses[i];
     const row = `${P1}Table_Line1[0].Row${i + 1}[0].`;
     const n = 3 + 4 * i;
-    add(`${row}f1_${pad(n)}[0]`, `line1.${i + 1}.name`, (r) => (b(r) ? r.scheduleC[b(r)!.index].business.businessName || r.scheduleC[b(r)!.index].business.principalBusiness : BLANK), true);
+    add(`${row}f1_${pad(n)}[0]`, `line1.${i + 1}.name`, (r) => b(r)?.row.name ?? BLANK, true);
     add(`${row}f1_${pad(n + 1)}[0]`, `line1.${i + 1}.a`, (r) => (b(r) ? money(b(r)!.qbi) : BLANK));
     add(`${row}f1_${pad(n + 2)}[0]`, `line1.${i + 1}.b`, (r) => (b(r)?.lossNetting ? money(-b(r)!.lossNetting) : BLANK));
     add(`${row}f1_${pad(n + 3)}[0]`, `line1.${i + 1}.c`, (r) => (b(r) ? money(b(r)!.line2) : BLANK));

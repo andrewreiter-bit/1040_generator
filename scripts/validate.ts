@@ -783,6 +783,12 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "8959-24-equals-1040-25c", round2(n0(m59("line24")) + (t.gamblingWinnings ?? []).filter((g) => g.recipient !== "spouse" || t.filingStatus === "MFJ").reduce((a, g) => a + g.federalWithheld, 0)), n0(line("line25c")), "Form 8959 line 24 + W-2G box 4 vs 1040 line 25c");
   }
   const m60 = keyed(docs.f8960?.[0], "f8960");
+  if (docs.f8960?.length) {
+    const g = (x: string) => n0(m60(x));
+    const ok = near(g("line4c"), round2(g("line4a") + g("line4b"))) && near(g("line9d"), g("line9a")) && near(g("line11"), round2(g("line9d") + g("line10")))
+      && near(g("line12"), Math.max(0, round2(g("line8") - g("line11"))));
+    checks.push({ phase: 2, id: "8960-lines-tie-out", ok, detail: ok ? undefined : `4c ${g("line4c")}, 8 ${g("line8")}, 11 ${g("line11")}, 12 ${g("line12")}` });
+  }
   if (docs.f8960?.length) tie(2, "8960-17-equals-sch2-12", n0(m60("line17")), n0(s2("line12")), "Form 8960 line 17 vs Schedule 2 line 12");
   const qa = keyed(docs.f8995a?.[0], "f8995a");
   if (docs.f8995a?.length) {
@@ -810,7 +816,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const q = keyed(docs.f8995?.[0], "f8995");
   if (docs.f8995?.length) {
     tie(2, "8995-15-equals-1040-13", n0(q("line15")), n0(line("line13")), "Form 8995 line 15 vs 1040 line 13");
-    const n8 = r.form8995?.businessIndex.length ?? 0;
+    const n8 = r.form8995?.rows.length ?? 0;
     checks.push({ phase: 2, id: "8995-businesses-fit", ok: n8 <= 5, detail: `${n8} qualified business(es); Form 8995 has 5 rows` });
   }
 
@@ -896,14 +902,20 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 2, id: "schE-columns-tie-out", ok: !colBad.length, detail: colBad.length ? `column(s) ${colBad.join(", ")}` : undefined });
     if (docs.f8960?.length) tie(2, "8960-4a-equals-schE-26", n0(m60("line4a")), n0(se("line26")), "Form 8960 line 4a vs Schedule E line 26");
     // Schedule E line 22 = the loss allowed after the passive limits (Form 8582 Part VIII, or all of it).
+    // Line 22 is completed for rental columns only (royalty results stay on line 21).
     const line22 = round2(["A", "B", "C"].reduce((a, k) => a + n0(se(`line22.${k}`)), 0));
-    const allowed = r.form8582 ? r.form8582.activities.reduce((a, x) => a + x.allowed, 0) : 0;
-    tie(2, "schE-22-equals-allowed-loss", -line22, allowed, "−Σ Schedule E line 22 vs allowed passive loss");
+    const rentalCol = (i: number) => r.scheduleE!.columns[i]?.property.propertyType !== 6;
+    const allowed = r.form8582 ? round2(r.form8582.activities.reduce((a, x, i) => a + (rentalCol(i) ? x.allowed : 0), 0)) : 0;
+    const passiveLine22 = r.form8582 ? round2(r.form8582.activities.reduce((a, x, i) => a + (rentalCol(i) && x.cls !== "nonpassive" ? x.allowed : 0), 0)) : 0;
+    tie(2, "schE-22-equals-allowed-loss", line22, allowed, "Σ Schedule E line 22 (in parentheses) vs allowed loss");
     const f8582run = docs.f8582?.[0];
     if (f8582run && r.form8582!.line3 < 0) {
       const q8 = keyed(f8582run, "f8582");
       tie(2, "8582-11-equals-9-plus-10", n0(q8("line11")), round2(n0(q8("line9")) + n0(q8("line10"))), "Form 8582 line 11 vs 9 + 10");
-      if (r.form8582!.unallowedCarryforward > 0) tie(2, "8582-partVIII-equals-schE-22", n0(q8("partVIII.total.c")), -line22, "Form 8582 Part VIII allowed vs −Σ Schedule E line 22");
+      // Part VIII lists passive losses only; compare it with the passive rental part of line 22
+      // (when every passive loss is a rental, so royalties don't enter Part VIII).
+      const passiveRoyaltyLoss = r.form8582!.activities.some((x, i) => !rentalCol(i) && x.cls !== "nonpassive" && x.loss > 0);
+      if (r.form8582!.unallowedCarryforward > 0 && !passiveRoyaltyLoss) tie(2, "8582-partVIII-equals-schE-22", n0(q8("partVIII.total.c")), passiveLine22, "Form 8582 Part VIII allowed vs passive Schedule E line 22");
     }
   }
 
