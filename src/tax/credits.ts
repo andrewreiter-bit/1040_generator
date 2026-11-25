@@ -90,6 +90,8 @@ export interface Schedule8812PartII {
 export function additionalChildTaxCredit(args: {
   t: FakeTaxpayer; R: Rounder; ctcChildren: number; line12: number; line14: number; earnedIncome: number;
   socialSecurityMedicareWithheld: number; seTaxDeduction: number; eic: number; excessSocialSecurity: number;
+  /** Schedule 2 line 13 (uncollected tax from W-2 box 12 A/B/M/N); lines 5 and 6 aren't modelled. */
+  uncollectedTax?: number;
 }): Schedule8812PartII {
   const { t, R, ctcChildren, line12, line14, earnedIncome } = args;
   const cap = yearConstants(t.taxYear).additionalChildTaxCreditPerChild;
@@ -106,7 +108,7 @@ export function additionalChildTaxCredit(args: {
   if (line16b < 3 * cap) return { ...base, credit: Math.min(line17, line20) };
   if (line20 >= line17) return { ...base, credit: line17 };
   const line21 = R(args.socialSecurityMedicareWithheld);
-  const line22 = R(args.seTaxDeduction);           // + Schedule 2 lines 5, 6, 13: not modelled (0)
+  const line22 = R(args.seTaxDeduction + (args.uncollectedTax ?? 0)); // Schedule 1 line 15 + Schedule 2 line 13 (5, 6: not modelled)
   const line23 = R(line21 + line22);
   const line24 = R(args.eic + args.excessSocialSecurity);
   const line25 = Math.max(0, R(line23 - line24));

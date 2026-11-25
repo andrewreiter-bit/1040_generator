@@ -1,7 +1,7 @@
 /**
  * computeReturn — an independent calculation of the Form 1040 for the income
  * types the generator supports (W-2 wages, interest, dividends, capital gain
- * distributions, a net capital gain/loss, Schedule C businesses) and the
+ * distributions, a net capital gain/loss, Schedule C businesses, Forms 1099-R) and the
  * schedules they need (1, 2, 3, C, SE, Forms 8959 / 8960 / 8995).
  *
  * Lines the PDF computes with its own formulas (9, 11, 14, 15, 18, 22, 24, 33,
@@ -38,12 +38,16 @@ import { ScheduleALines, scheduleA } from "./itemized";
 import { ScheduleELines, scheduleE } from "./rental";
 import { Form8582Lines, form8582 } from "./passive";
 import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
+import { RetirementLines, retirementDistributions } from "./retirement";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
   rentalIncome: number;        // 5 (Schedule E line 26)
   unemployment: number;        // 7
   unemploymentRepaid: number;  // repayment shown beside line 7
+  /** 8g: Alaska Permanent Fund dividends (not NII, not earned or EIC investment income). */
+  alaskaPfd: number;
+  otherIncome: number;         // 9 (lines 8a–8z; only 8g is modelled)
   additionalIncome: number;    // 10 → 1040 line 8
   educatorExpenses: number;    // 11
   seTaxDeduction: number;      // 15
@@ -56,6 +60,10 @@ export interface Schedule1Lines {
 
 export interface Schedule2Lines {
   seTax: number;               // 4
+  /** 8: 10% additional tax on code 1 early distributions (Form 5329 not required; box checked). */
+  earlyDistributionTax: number;
+  /** 13: uncollected Social Security / Medicare tax from W-2 box 12 codes A, B, M and N. */
+  uncollectedTax: number;
   additionalMedicareTax: number; // 11
   niit: number;                // 12
   otherTaxes: number;          // 21 → 1040 line 23
@@ -79,6 +87,8 @@ export interface ReturnLines {
   netCapitalGain: number;
   scheduleDRequired: boolean;
   capital: CapitalResult;
+  /** Lines 4a–5b (Forms 1099-R) and Schedule 2 line 8. */
+  retirement: RetirementLines;
   /** Lines 6a / 6b. */
   socialSecurity: SocialSecurityLines;
   youBlind: boolean;
@@ -173,6 +183,9 @@ function qdcgTax(taxable: number, qualDiv: number, netCapGain: number, t: FakeTa
 
 const memo = new WeakMap<FakeTaxpayer, ReturnLines>();
 
+/** W-2 box 12 codes whose amounts are uncollected tax owed on Schedule 2 line 13. */
+const UNCOLLECTED_TAX_CODES = new Set(["A", "B", "M", "N"]);
+
 export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const cached = memo.get(t);
   if (cached) return cached;
@@ -210,6 +223,11 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     unsupported.push("Social Security benefits given only as a net figure (no SSA-1099 detail)");
   }
 
+  // ── Pensions, annuities and IRAs (lines 4a–5b) ───────────────────────────
+  const retirement = retirementDistributions(t, R);
+  const retirementIncome = round2(retirement.line4b + retirement.line5b);
+  if (retirement.needsForm5329) unsupported.push("code 1 early distribution next to another 1099-R code for the same person (Form 5329)");
+
   // ── Schedule C / SE ───────────────────────────────────────────────────────
   const scheduleCs = includedScheduleCs(t).map((b) => scheduleC(b, t.taxYear, R));
   const owners = (["primary", "spouse"] as const).filter((o) => scheduleCs.some((c) => c.owner === o));
@@ -222,6 +240,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const g1099s = (t.unemployment1099Gs ?? []).filter((g) => g.recipient !== "spouse" || joint);
   const unemploymentRepaid = sum(g1099s.map((g) => g.repaidThisYear));
   const unemployment = round2(sum(g1099s.map((g) => g.compensation)) - unemploymentRepaid);
+  const alaskaPfd = sum([t.alaskaPermanentFundDividends?.primary ?? 0, joint ? t.alaskaPermanentFundDividends?.spouse ?? 0 : 0]);
+  const otherIncome = alaskaPfd;
   const educatorExpenses = sum([
     Math.min(t.educatorExpenses?.primary ?? 0, EDUCATOR_EXPENSE_LIMIT),
     joint ? Math.min(t.educatorExpenses?.spouse ?? 0, EDUCATOR_EXPENSE_LIMIT) : 0,
@@ -239,23 +259,23 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     const nets = schEBase.columns.map((c) => c.net);
     const netPassive = sum(nets);
     const modifiedAgi = round2(
-      wages + taxableInterest + ordinaryDividends + capitalGain + businessIncome + unemployment + Math.max(0, netPassive)
+      wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + businessIncome + unemployment + otherIncome + Math.max(0, netPassive)
       - (educatorExpenses + healthInsurance + earlyWithdrawalPenalty),
     );
     f8582 = form8582(t, nets, modifiedAgi, R);
     schE = scheduleE(t.rentals!, R, f8582.activities.map((a) => a.allowed));
   }
   const rentalIncome = schE?.line26 ?? 0;
-  const additionalIncome = round2(businessIncome + rentalIncome + unemployment);
+  const additionalIncome = round2(businessIncome + rentalIncome + unemployment + otherIncome);
   // Lines 6a/6b: the worksheet uses every other income line and the adjustments other
   // than student loan interest (whose own worksheet uses line 9, so it comes after).
   const socialSecurity = socialSecurityWorksheet(
     t,
-    round2(wages + taxableInterest + ordinaryDividends + capitalGain + additionalIncome),
+    round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome),
     sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]),
     R,
   );
-  const totalIncome = round2(wages + taxableInterest + ordinaryDividends + socialSecurity.taxable + capitalGain + additionalIncome);
+  const totalIncome = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + socialSecurity.taxable + capitalGain + additionalIncome);
 
   // Student Loan Interest Deduction Worksheet (not allowed on MFS).
   let studentLoanInterest = 0;
@@ -269,7 +289,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   }
   const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, studentLoanInterest]);
   const schedule1: Schedule1Lines = {
-    businessIncome, rentalIncome, unemployment, unemploymentRepaid, additionalIncome, educatorExpenses, seTaxDeduction,
+    businessIncome, rentalIncome, unemployment, unemploymentRepaid, alaskaPfd, otherIncome, additionalIncome, educatorExpenses, seTaxDeduction,
     healthInsurance, earlyWithdrawalPenalty, studentLoanInterest, adjustments,
     required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0 || !!schE,
   };
@@ -309,13 +329,16 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   }
   const additionalDeductions = schedule1A?.line38 ?? 0;
   let qbi: Form8995Lines | undefined;
-  if (scheduleCs.length || t.priorYearQbiLoss) {
+  // Only qualified trades or businesses enter Forms 8995 / 8995-A (each keeps its Schedule C index).
+  const qbiIdx = scheduleCs.map((_, i) => i).filter((i) => !scheduleCs[i].business.notQualifiedForQbi);
+  const qbiAmounts = qbiIdx.map((i) => bizDed.qbiByBusiness[i]);
+  if (qbiIdx.length || t.priorYearQbiLoss) {
     // Form 8995 line 11: taxable income before the QBI deduction (2025: after line 13b).
-    qbi = form8995(bizDed.qbiByBusiness, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R);
+    qbi = form8995(qbiAmounts, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R, qbiIdx);
   }
   // Above the threshold: Form 8995-A (W-2 wage / UBIA limit, SSTB phase-out, loss netting).
   const f8995a = qbi?.overThreshold
-    ? form8995A(scheduleCs, bizDed.qbiByBusiness, qbi.taxableIncomeBeforeQbi, qbi.netCapitalGain, t, R)
+    ? form8995A(qbiIdx.map((i) => scheduleCs[i]), qbiAmounts, qbi.taxableIncomeBeforeQbi, qbi.netCapitalGain, t, R, qbiIdx)
     : undefined;
   const qbiDeduction = f8995a ? f8995a.line39 : qbi ? qbi.deduction : 0;
   const totalDeductions = round2(deduction + qbiDeduction + additionalDeductions);
@@ -344,9 +367,12 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const f8959 = form8959(t.filingStatus, w2s, scheduleSEs, R);
   const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome);
   const seTax = sum(scheduleSEs.map((s) => s.seTax));
-  const otherTaxes = round2(seTax + f8959.totalTax + f8960.tax);
+  const earlyDistributionTax = retirement.additionalTax;
+  // Line 13 (Schedule 2 instructions): "box 12 of Form W-2 with codes A and B or M and N".
+  const uncollectedTax = sum(w2s.flatMap((w) => (w.box12 ?? []).filter((e) => UNCOLLECTED_TAX_CODES.has(e.code)).map((e) => e.amount)));
+  const otherTaxes = round2(seTax + earlyDistributionTax + f8959.totalTax + f8960.tax + uncollectedTax);
   const schedule2: Schedule2Lines = {
-    seTax, additionalMedicareTax: f8959.totalTax, niit: f8960.tax, otherTaxes,
+    seTax, earlyDistributionTax, uncollectedTax, additionalMedicareTax: f8959.totalTax, niit: f8960.tax, otherTaxes,
     required: otherTaxes > 0 || scheduleTwoPartOne > 0,
   };
   const totalTax = round2(taxAfterCredits + otherTaxes);
@@ -360,6 +386,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     capital.federalWithheld,
     ...g1099s.map((g) => g.federalWithheld),
     socialSecurity.federalWithheld,
+    retirement.federalWithheld,
   ]);
   const otherWithholding = f8959.additionalWithheld;
   const totalWithholding = round2(w2Withholding + form1099Withholding + otherWithholding);
@@ -388,7 +415,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const partII = additionalChildTaxCredit({
     t, R, ctcChildren: nCtc, line12: creditAfterPhaseout, line14: childAndOtherDependentCredit, earnedIncome,
     socialSecurityMedicareWithheld: sum(w2s.flatMap((w) => [w.ssWithheld, w.medicareWithheld])),
-    seTaxDeduction: seTaxDeduction, eic: eic.credit, excessSocialSecurity: excessSs,
+    seTaxDeduction: seTaxDeduction, eic: eic.credit, excessSocialSecurity: excessSs, uncollectedTax,
   });
   const schedule8812 = {
     ctcChildren: nCtc, otherDependents: nOdc, maxCredit, threshold, reduction, afterPhaseout: creditAfterPhaseout,
@@ -403,7 +430,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   const result: ReturnLines = {
     wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
-    capitalGain, netCapitalGain, scheduleDRequired, capital, socialSecurity, standardDeductionAmount, itemizes,
+    capitalGain, netCapitalGain, scheduleDRequired, capital, retirement, socialSecurity, standardDeductionAmount, itemizes,
     scheduleA: itemizes ? schA : undefined, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,

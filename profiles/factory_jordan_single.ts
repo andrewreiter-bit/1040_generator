@@ -7,8 +7,9 @@ import {
   Dividend1099,
   FilingStatus,
 } from "./taxpayer";
-import { ssWageBase } from "./tax-year";
-import { addBusinessPayrollAndProperty, buildScheduleC } from "./schedule-c";
+import { ALASKA_PFD, ssWageBase } from "./tax-year";
+import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "./schedule-c";
+import { buildRetirement1099Rs } from "./retirement";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -226,6 +227,15 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   }
   // Payroll and qualified property for Form 8995-A (last draws, so nothing earlier moves).
   if (taxpayer.scheduleCs?.length) addBusinessPayrollAndProperty(faker, taxpayer.scheduleCs[0]);
+  // Pension / IRA distributions by age (Forms 1099-R); last draws, so nothing earlier moves.
+  const retirement1099Rs = buildRetirement1099Rs(faker, taxpayer);
+  if (retirement1099Rs.length) taxpayer.retirement1099Rs = retirement1099Rs;
+  // Alaska residents get the year's Permanent Fund dividend (Schedule 1 line 8g; no random draws).
+  if (taxpayer.state === "AK" && ALASKA_PFD[taxYear]) {
+    taxpayer.alaskaPermanentFundDividends = { primary: ALASKA_PFD[taxYear], spouse: taxpayer.spouseSSN ? ALASKA_PFD[taxYear] : undefined };
+  }
+  // Car loan interest / personal property tax on the business vehicle (last draws; line 31 unchanged).
+  if (taxpayer.scheduleCs?.length) addVehicleCosts(faker, taxpayer.scheduleCs[0], taxYear);
   return taxpayer;
 }
 

@@ -58,6 +58,7 @@ export function deductionAmount(t: FakeTaxpayer): number {
 const r = computeReturn;
 const hasRefund = (t: FakeTaxpayer) => r(t).refund > 0;
 const moneyOrBlank = (n: number) => (n === 0 ? BLANK : money(n));
+const hasRetirement = (t: FakeTaxpayer, line: "ira" | "pension") => r(t).retirement.records.some((x) => x.line === line);
 const hasCapitalActivity = (t: FakeTaxpayer) => r(t).scheduleDRequired || t.capitalGains != null || r(t).capitalGainDistributions !== 0;
 
 const TEXT_VALUES: Record<string, FieldValue> = {
@@ -78,6 +79,13 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   line2b:           (t) => money(r(t).taxableInterest),
   line3a:           (t) => money(r(t).qualifiedDividends),
   line3b:           (t) => money(r(t).ordinaryDividends),
+  // 4a/5a are left blank when every distribution on the line is fully taxable (see tax/retirement.ts).
+  line4a:           (t) => (r(t).retirement.line4aBlank ? BLANK : money(r(t).retirement.line4a)),
+  line4b:           (t) => (hasRetirement(t, "ira") ? money(r(t).retirement.line4b) : BLANK),
+  line5a:           (t) => (r(t).retirement.line5aBlank ? BLANK : money(r(t).retirement.line5a)),
+  line5b:           (t) => (hasRetirement(t, "pension") ? money(r(t).retirement.line5b) : BLANK),
+  line4cOtherText:  () => BLANK,
+  line5cOtherText:  () => BLANK,
   line6a:           (t) => moneyOrBlank(r(t).socialSecurity.line1),
   line6b:           (t) => (r(t).socialSecurity.line1 ? money(r(t).socialSecurity.taxable) : BLANK),
   line7:            (t) => (hasCapitalActivity(t) ? money(r(t).capitalGain) : BLANK),
@@ -124,6 +132,13 @@ const CHECKBOX_VALUES: Record<string, FieldValue> = {
   designeeYes:      () => OFF,
   designeeNo:       () => CHECK,
   mainHomeInUS:     () => CHECK,
+  // 2025 lines 4c / 5c: box 1 rollover; QCD (4c box 2), PSO (5c box 2) and box 3 aren't modelled.
+  line4cRollover:   (t) => checkIf(r(t).retirement.iraRollover),
+  line4cQcd:        () => OFF,
+  line4cOther:      () => OFF,
+  line5cRollover:   (t) => checkIf(r(t).retirement.pensionRollover),
+  line5cPso:        () => OFF,
+  line5cOther:      () => OFF,
 };
 
 function buildMap(taxYear: number, layout: Layout1040): FieldMap {
@@ -251,6 +266,10 @@ const LAYOUT_2023: Layout1040 = {
     line2b: `${P1}f1_42[0]`,
     line3a: `${P1}f1_43[0]`,
     line3b: `${P1}f1_44[0]`,
+    line4a: `${L4}f1_45[0]`,
+    line4b: `${L4}f1_46[0]`,
+    line5a: `${L4}f1_47[0]`,
+    line5b: `${L4}f1_48[0]`,
     line6a: `${L4}f1_49[0]`,
     line6b: `${L4}f1_50[0]`,
     line7: `${L4}f1_51[0]`,
@@ -298,6 +317,10 @@ const LAYOUT_2024: Layout1040 = {
     line2b: `${P1}f1_43[0]`,
     line3a: `${P1}f1_44[0]`,
     line3b: `${P1}f1_45[0]`,
+    line4a: `${L4}f1_46[0]`,
+    line4b: `${L4}f1_47[0]`,
+    line5a: `${L4}f1_48[0]`,
+    line5b: `${L4}f1_49[0]`,
     line6a: `${L4}f1_50[0]`,
     line6b: `${L4}f1_51[0]`,
     line7: `${L4}f1_52[0]`,
@@ -374,6 +397,12 @@ const LAYOUT_2025: Layout1040 = {
     line2b: `${P1}f1_59[0]`,
     line3a: `${P1}f1_60[0]`,
     line3b: `${P1}f1_61[0]`,
+    line4a: `${P1}f1_62[0]`,
+    line4b: `${P1}f1_63[0]`,
+    line4cOtherText: `${P1}f1_64[0]`,
+    line5a: `${P1}f1_65[0]`,
+    line5b: `${P1}f1_66[0]`,
+    line5cOtherText: `${P1}f1_67[0]`,
     line6a: `${P1}f1_68[0]`,
     line6b: `${P1}f1_69[0]`,
     line7: `${P1}f1_70[0]`,
@@ -409,6 +438,12 @@ const LAYOUT_2025: Layout1040 = {
     digitalAssetsNo: `${P1}c1_10[1]`,
     moreThan4Deps: `${P1}Dependents_ReadOrder[0].c1_11[0]`,
     scheduleDNotRequired: `${P1}c1_43[0]`,
+    line4cRollover: `${P1}c1_35[0]`,
+    line4cQcd: `${P1}c1_36[0]`,
+    line4cOther: `${P1}c1_37[0]`,
+    line5cRollover: `${P1}c1_38[0]`,
+    line5cPso: `${P1}c1_39[0]`,
+    line5cOther: `${P1}c1_40[0]`,
     youBornBefore: `${P2}c2_5[0]`,
     youBlind: `${P2}c2_6[0]`,
     spouseBornBefore: `${P2}c2_7[0]`,

@@ -9,6 +9,7 @@
  *   f1040sse  one per person who owes SE tax (view.document.person)
  *   f1040s1 / s2 / s3 / sa / sd / se / f8995 / f8959 / f8960   one when the return needs it, otherwise none
  *   f1099b    one per sale reported on a 1099-B (Form 8949 box A/B/D/E)
+ *   f1099r    one per pension / IRA distribution on the return (view.document.retirementIndex)
  *   f8949     one per copy needed (one short-term and one long-term box per copy, 11 rows each)
  *   others    one, filled from the household
  *
@@ -97,6 +98,16 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
         count: sales.length,
         label: `1099-B #${i + 1} (${r.sale.brokerName}, box ${r.box})`,
         view: { ...t, document: { source: t, saleIndex: i } },
+      }));
+    }
+    case "f1099r": {
+      if (!getFieldMap("f1099r", t.taxYear)) return [];
+      const rs = computeReturn(t).retirement.records;
+      return rs.map((x, i) => ({
+        index: i + 1,
+        count: rs.length,
+        label: `1099-R #${i + 1} (${x.r.recipient ?? "primary"}, code ${x.r.distributionCode}${x.r.iraSepSimple ? ", IRA" : ""})`,
+        view: { ...t, document: { source: t, retirementIndex: i } },
       }));
     }
     case "f1040s8": return single(formId, t, "Schedule 8812");

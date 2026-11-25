@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, FakeTaxpayer, FilingStatus, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, DistributionCode, FakeTaxpayer, FilingStatus, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { saversCreditAgiLimit } from "../config/tax-year";
 import { isQualifyingChild } from "../tax/household";
@@ -110,6 +110,8 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS8959", element: "TotalAMRRTTaxAmt", label: "8959 18", pick: (r) => [r.form8959.totalTax] },
   { form: "IRS8959", element: "AddnlMedicareTaxWithholdingAmt", label: "8959 24", pick: (r) => [r.form8959.additionalWithheld] },
   { form: "IRS1040Schedule3", element: "ExcessSocSecAndTier1RRTATaxAmt", label: "Sch 3 11", pick: (r) => [r.schedule3.excessSocialSecurity] },
+  { form: "IRS1040", element: "TaxableIRAAmt", label: "1040 4b", pick: (r) => [r.retirement.line4b] },
+  { form: "IRS1040", element: "TaxablePensionsAmt", label: "1040 5b", pick: (r) => [r.retirement.line5b] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
   { form: "IRS8995A", element: "TotalQBIComponentAmt", label: "8995-A 16", pick: (r) => (r.form8995A ? [r.form8995A.line16] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
@@ -170,8 +172,10 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs1040_schedulec\[\]\.irs1099_nec\[\]\.nec_(payer_\w+|comp|fed_wh)$/,
   /^irs1040_schedulec\[\]\.irs1099_k\[\]\.k_(payer_\w+|comp|fed_wh)$/,
   /^irs1040_schedulec\[\]\.irs1099_misc\[\]\.(payer_\w+|rents|other_income|fish_boat_proceeds|medandhlth_care_pmts|misc_fed_wh)$/,
-  // Standard-mileage vehicles: only miles, parking and tolls (see VEHICLE_COST_PATHS).
-  /^irs1040_schedulec\[\]\.vehicle_info_group\[\]\.(vehicle_(standard_mileage|service_date|business_miles|commuting_miles|other_miles|off_duty|another_avail|evidence_support|evidence_written)|car_truck_expense_(parking|tolls))$/,
+  // Standard-mileage vehicles. TaxCalcBench puts the business share (business ÷ total miles)
+  // of loan interest and personal property tax on line 9; the engine follows the Schedule C
+  // line 9 instructions and puts it on lines 16b and 23 (same line 28 total).
+  /^irs1040_schedulec\[\]\.vehicle_info_group\[\]\.(vehicle_(standard_mileage|service_date|business_miles|commuting_miles|other_miles|off_duty|another_avail|evidence_support|evidence_written)|car_truck_expense_(parking|tolls|interest|tax))$/,
   /^irs8995a_schedulec\.prior_yr_qbi_loss_carryforward$/,
   // Form 8949 / Schedule D.
   /^irs8949\.irs1099_b_grp\[\]\.(payer_name|who_applies_to)$/,
@@ -184,13 +188,15 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs1040_schedule1\.irs1099_g\[\]\.(g_payer_\w+|g_who_applies_to|g_unemployment_comp|g_fed_wh|g_amount_repaid_current_year)$/,
   /^irs1040_schedule1\.irs1099_g\[\]\.irs1099_g_state\[\]\.\w+$/,
   /^irs1040_schedule1\.(qualified_educator|tp_educator_exp_amount|sp_educator_exp_amount|paid_student_loan_interest|student_interest)$/,
+  // Alaska Permanent Fund dividends (Schedule 1 line 8g).
+  /^irs1040_schedule1\.alaska_permanent_dividend_(tp|sp)_input$/,
+  // Form 1099-R (box 7 codes outside 1/2/7/G/Q are reported separately).
+  /^irs1099_r\[\]\.(who_applies_to|corrected_ind_checkbox|payer_ein_input|payer_name_business_name_input|payer_us_address_(input|city_nm_input|state_abbreviation_cd_input|zip_cd_input)|phone_num_input)$/,
+  /^irs1099_r\[\]\.(gross_distribution_amt_input|taxable_amt_input|txbl_amount_not_determined_ind_input|total_distribution_ind_input|federal_income_tax_withheld_amt_input|employee_contributions_amt_input|f1099_r_distribution_cd_input|irasepsimple_ind_input)$/,
 ];
 
-/**
- * TaxCalcBench adds the vehicle's loan interest and personal property tax to line 9
- * pro-rated by a business-use ratio we can't reproduce exactly; keep those cases out.
- */
-const VEHICLE_COST_PATHS = /^irs1040_schedulec\[\]\.vehicle_info_group\[\]\.car_truck_expense_(tax|interest)$/;
+/** W-2 box 12 codes that are uncollected tax (Schedule 2 line 13). */
+const UNCOLLECTED_BOX12 = new Set(["A", "B", "M", "N"]);
 
 /** W-2 box 12 elective deferrals: no effect on the scored lines unless the Saver's credit (Form 8880) applies. */
 const RETIREMENT_BOX12 = new Set(["D", "E", "F", "G", "H", "S", "AA", "BB", "EE"]);
@@ -248,11 +254,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   for (const [p, v] of leaves(rd)) {
     if (p === "w2[].employers_use_grp[].box_12_code") {
       if (RETIREMENT_BOX12.has(String(v))) retirementDeferral = true;
-      else if (!NEUTRAL_BOX12.has(String(v))) outOfScope.add(`W-2 box 12 code ${v}`);
-      continue;
-    }
-    if (VEHICLE_COST_PATHS.test(p)) {
-      outOfScope.add("Schedule C vehicle loan interest / property tax with the standard mileage rate");
+      else if (!NEUTRAL_BOX12.has(String(v)) && !UNCOLLECTED_BOX12.has(String(v))) outOfScope.add(`W-2 box 12 code ${v}`);
       continue;
     }
     if (p === "w2[].employers_use_grp[].box_12_amount") continue;
@@ -308,6 +310,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       stateWithheld: num(val(st, "state_income_tax")),
       stateCode: String(val(st, "state") ?? ""),
       employee: val(w, "who_applies_to") === "spouse" ? "spouse" : "primary",
+      box12: list(w, "employers_use_grp")
+        .map((e) => ({ code: String(val(e, "box_12_code") ?? ""), amount: num(val(e, "box_12_amount")) }))
+        .filter((e) => UNCOLLECTED_BOX12.has(e.code)),
     };
   });
 
@@ -330,7 +335,6 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
 
   const scheduleCs: ScheduleCBusiness[] = list(rd, "irs1040_schedulec").map((c) => {
     if (val(c, "schc_at_risk") !== true) outOfScope.add("Schedule C investment not all at risk (Form 6198)");
-    if (val(c, "qualified_business") === false) outOfScope.add("Schedule C business not a qualified trade or business (QBI)");
     if (val(c, "use_calculated_qbi") === false) outOfScope.add("user-adjusted QBI");
     const nec = list(c, "irs1099_nec"), k = list(c, "irs1099_k"), misc = list(c, "irs1099_misc");
     const form1099Receipts =
@@ -381,7 +385,10 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
         otherMiles: num(val(veh, "vehicle_other_miles")),
         placedInService: isoToUs(val(veh, "vehicle_service_date")),
         parkingTolls: num(val(veh, "car_truck_expense_parking")) + num(val(veh, "car_truck_expense_tolls")),
+        loanInterest: num(val(veh, "car_truck_expense_interest")) || undefined,
+        personalPropertyTax: num(val(veh, "car_truck_expense_tax")) || undefined,
       } : undefined,
+      notQualifiedForQbi: val(c, "qualified_business") === false || undefined,
       homeOfficeSqFt: num(val(c, "business_home_area")) || undefined,
       homeTotalSqFt: num(val(c, "total_home_area")) || undefined,
       healthInsurancePremiums: num(val(c, "se_health_insurance")) || undefined,
@@ -433,6 +440,27 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       benefitsPaid: net, benefitsRepaid: 0, netBenefits: net,
       federalWithheld: num(val(g, "ssa_federal_withholding")),
       medicarePremiums: num(val(g, "ssa_medicare_premiums")) || undefined,
+    };
+  });
+  const CODES = new Set<string>(["1", "2", "7", "G", "Q"]);
+  const retirement1099Rs = list(rd, "irs1099_r").map((x): Retirement1099R => {
+    const code = String(val(x, "f1099_r_distribution_cd_input") ?? "");
+    if (!CODES.has(code)) outOfScope.add(`Form 1099-R distribution code "${code}"`);
+    return {
+      recipient: val(x, "who_applies_to") === "spouse" ? "spouse" : "primary",
+      payerName: String(val(x, "payer_name_business_name_input") ?? ""),
+      payerTin: String(val(x, "payer_ein_input") ?? ""),
+      payerStreet: String(val(x, "payer_us_address_input") ?? ""),
+      payerCity: [val(x, "payer_us_address_city_nm_input"), val(x, "payer_us_address_state_abbreviation_cd_input"), val(x, "payer_us_address_zip_cd_input")]
+        .filter(Boolean).join(" "),
+      grossDistribution: num(val(x, "gross_distribution_amt_input")),
+      taxableAmount: num(val(x, "taxable_amt_input")),
+      taxableAmountNotDetermined: val(x, "txbl_amount_not_determined_ind_input") === true,
+      totalDistribution: val(x, "total_distribution_ind_input") === true,
+      federalWithheld: num(val(x, "federal_income_tax_withheld_amt_input")),
+      employeeContributions: num(val(x, "employee_contributions_amt_input")) || undefined,
+      distributionCode: code as DistributionCode,
+      iraSepSimple: val(x, "irasepsimple_ind_input") === true,
     };
   });
   const schD = rd.irs1040_schedule_d;
@@ -520,6 +548,11 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     capitalSales,
     capitalLossCarryover,
     ssa1099s,
+    retirement1099Rs: retirement1099Rs.length ? retirement1099Rs : undefined,
+    alaskaPermanentFundDividends: {
+      primary: num(val(schedule1, "alaska_permanent_dividend_tp_input")) || undefined,
+      spouse: num(val(schedule1, "alaska_permanent_dividend_sp_input")) || undefined,
+    },
     blind: val(f1040, "tp_blind") === true,
     spouseBlind: val(f1040, "sp_blind") === true,
     educatorExpenses: educator

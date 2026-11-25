@@ -16,7 +16,7 @@
 import { Faker } from "@faker-js/faker";
 import { ScheduleCBusiness, ScheduleCExpenses } from "./taxpayer";
 import { SIMPLIFIED_HOME_OFFICE, yearConstants } from "../config/tax-year";
-import { scheduleC } from "../tax/business";
+import { scheduleC, vehicleBusinessShare } from "../tax/business";
 import { cents } from "../tax/rounding";
 
 /** Principal business / Schedule C line B codes (from the Schedule C instructions' code list). */
@@ -152,4 +152,21 @@ export function addBusinessPayrollAndProperty(faker: Faker, b: ScheduleCBusiness
     b.ein = `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`;
   }
   if (faker.datatype.boolean({ probability: 0.3 })) b.ubia = dollars(faker, 5000, 120000);
+}
+
+/**
+ * After every other draw: about half of the standard-mileage vehicles carry a car loan
+ * (interest) and most of those a personal property tax. Their business share (business ÷
+ * total miles) lands on Schedule C lines 16b and 23, so gross receipts rise by the same
+ * amount, reconciled to the cent, and line 31 stays at the drawn figure.
+ */
+export function addVehicleCosts(faker: Faker, b: ScheduleCBusiness, taxYear: number): void {
+  if (!b.vehicle || !faker.datatype.boolean({ probability: 0.5 })) return;
+  const before = scheduleC(b, taxYear, cents).netProfit;
+  b.vehicle.loanInterest = dollars(faker, 150, 2400);
+  if (faker.datatype.boolean({ probability: 0.7 })) b.vehicle.personalPropertyTax = dollars(faker, 40, 900);
+  const share = vehicleBusinessShare(b);
+  b.grossReceipts = round2(b.grossReceipts + share.interest + share.tax);
+  const drift = round2(before - scheduleC(b, taxYear, cents).netProfit);
+  if (drift !== 0) b.grossReceipts = round2(b.grossReceipts + drift);
 }

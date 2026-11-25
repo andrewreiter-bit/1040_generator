@@ -9,11 +9,12 @@ import { CREDIT_MAPS } from "./credits";
 import { F1099B_MAPS } from "./f1099b";
 import { FORM_8582_MAPS, SCHEDULE_A_E_MAPS } from "./schedules-ae";
 import { QBI_MAPS } from "./qbi";
+import { F1099R_MAPS } from "./f1099r";
 
 export * from "./types";
 
 const ALL_MAPS: FieldMap[] = [
-  ...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS, ...SCHEDULE_C_MAPS, ...SCHEDULE_SE_MAPS, ...SCHEDULE_1_2_3_MAPS, ...CAPITAL_MAPS, ...CREDIT_MAPS, ...F1099B_MAPS, ...SCHEDULE_A_E_MAPS, ...FORM_8582_MAPS, ...QBI_MAPS,
+  ...F1040_MAPS, ...F1040SB_MAPS, ...FW4_MAPS, ...SCHEDULE_C_MAPS, ...SCHEDULE_SE_MAPS, ...SCHEDULE_1_2_3_MAPS, ...CAPITAL_MAPS, ...CREDIT_MAPS, ...F1099B_MAPS, ...SCHEDULE_A_E_MAPS, ...FORM_8582_MAPS, ...QBI_MAPS, ...F1099R_MAPS,
 ];
 
 export function getFieldMap(formId: string, taxYear: number): FieldMap | undefined {

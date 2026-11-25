@@ -40,6 +40,12 @@ export interface W2Record {
   stateCode: string;              // Box 15
   /** Whose W-2 this is. Omitted = primary taxpayer. A spouse W-2 appears only on MFJ returns. */
   employee?: "primary" | "spouse";
+  /**
+   * Box 12 entries that change the return: A/B (uncollected Social Security / Medicare tax
+   * on tips) and M/N (the same on group-term life insurance), which go to Schedule 2 line 13.
+   * The profiles don't draw these (the W-2 map leaves box 12 blank); the answer key does.
+   */
+  box12?: Array<{ code: string; amount: number }>;
 }
 
 export interface Interest1099 {
@@ -105,8 +111,15 @@ export interface ScheduleCBusiness {
   costOfGoodsSold: number;       // 4
   otherIncome: number;           // 6
   expenses: ScheduleCExpenses;
-  /** Business standard-mileage miles (line 9 = miles × rate + parkingTolls). */
-  vehicle?: { businessMiles: number; commutingMiles: number; otherMiles: number; placedInService: string; parkingTolls: number };
+  /**
+   * Business standard-mileage miles (line 9 = miles × rate + parkingTolls). The car loan
+   * interest and personal property tax are for the whole year; their business share
+   * (business ÷ total miles, Pub 463) goes on lines 16b and 23, not line 9.
+   */
+  vehicle?: {
+    businessMiles: number; commutingMiles: number; otherMiles: number; placedInService: string; parkingTolls: number;
+    loanInterest?: number; personalPropertyTax?: number;
+  };
   /** Simplified-method home office: square feet used for business (line 30b) and of the whole home (30a). */
   homeOfficeSqFt?: number;
   homeTotalSqFt?: number;
@@ -114,6 +127,8 @@ export interface ScheduleCBusiness {
   paid1099Payments?: boolean;
   /** Self-employed health insurance premiums for this business (Schedule 1 line 17). */
   healthInsurancePremiums?: number;
+  /** § 199A: not a qualified trade or business (left out of Forms 8995 / 8995-A). Omitted = qualified. */
+  notQualifiedForQbi?: boolean;
   /** § 199A: specified service trade or business (health, law, accounting, consulting, …). */
   sstb?: boolean;
   /** § 199A W-2 wages paid to employees (Form 8995-A line 4). */
@@ -208,6 +223,43 @@ export interface Unemployment1099G {
   federalWithheld: number;      // box 4
 }
 
+/** Form 1099-R box 7 distribution codes the model supports. */
+export type DistributionCode =
+  | "1"   // early distribution, no known exception (10% additional tax)
+  | "2"   // early distribution, exception applies
+  | "7"   // normal distribution
+  | "G"   // direct rollover to a qualified plan or IRA (box 2a = 0)
+  | "Q";  // qualified Roth IRA distribution (not taxable)
+
+/**
+ * Form 1099-R: a distribution from a pension, annuity, 401(k) or IRA. The
+ * IRA/SEP/SIMPLE box decides the 1040 line (4a/4b for IRAs, 5a/5b otherwise).
+ */
+export interface Retirement1099R {
+  /** Omitted = primary taxpayer. A spouse's 1099-R appears only on MFJ returns. */
+  recipient?: "primary" | "spouse";
+  payerName: string;
+  payerTin: string;
+  payerStreet: string;
+  /** "City, ST ZIP". */
+  payerCity: string;
+  accountNumber?: string;
+  grossDistribution: number;          // box 1
+  /** Box 2a. Code G: 0. Code Q: 0 (left blank by the payer, not taxable). */
+  taxableAmount: number;
+  taxableAmountNotDetermined: boolean; // box 2b
+  totalDistribution: boolean;          // box 2b
+  federalWithheld: number;            // box 4
+  /** Box 5: employee contributions recovered tax free (box 1 − box 2a for a partly taxable pension). */
+  employeeContributions?: number;
+  distributionCode: DistributionCode; // box 7
+  iraSepSimple: boolean;              // box 7 checkbox
+  /** Box 14–16 (one state). */
+  stateWithheld?: number;
+  stateCode?: string;
+  statePayerNumber?: string;
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -224,6 +276,8 @@ export interface DocumentContext {
   form8949Copy?: number;
   /** Which reported sale a Form 1099-B is for (see reportedSales). */
   saleIndex?: number;
+  /** Which Form 1099-R (index into computeReturn(source).retirement.records). */
+  retirementIndex?: number;
 }
 
 export interface FakeTaxpayer {
@@ -282,6 +336,10 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Alaska Permanent Fund dividends received (Schedule 1 line 8g), per person. */
+  alaskaPermanentFundDividends?: { primary?: number; spouse?: number };
+  /** Pension, annuity and IRA distributions (Form 1040 lines 4a–5b). */
+  retirement1099Rs?: Retirement1099R[];
   /** Social Security benefits. When present, `socialSecurityBenefits` is ignored. */
   ssa1099s?: SSA1099[];
   /** MFS only: lived with the spouse at any time during the year (Social Security base amount $0). Omitted = yes. */

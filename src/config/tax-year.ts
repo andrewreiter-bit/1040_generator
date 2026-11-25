@@ -181,6 +181,13 @@ export const SOCIAL_SECURITY_TAXABILITY = {
 };
 
 /**
+ * Alaska Permanent Fund dividend per eligible resident (Schedule 1 line 8g), including any
+ * energy relief payment made with it: 2023 $1,312; 2024 $1,702 ($1,403.83 + $298.17 energy
+ * relief); 2025 $1,000 (Alaska Department of Revenue announcements).
+ */
+export const ALASKA_PFD: Record<number, number> = { 2023: 1312, 2024: 1702, 2025: 1000 };
+
+/**
  * 2025 Schedule 1-A Part V, enhanced deduction for seniors (OBBBA § 70103):
  * $6,000 per spouse born before January 2, 1961 with a valid SSN, less 6% of
  * modified AGI over $75,000 ($150,000 joint); married couples must file jointly.

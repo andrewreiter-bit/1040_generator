@@ -38,7 +38,7 @@ import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
   "f8959", "f8960", "f8949", "f8582", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
-  "fw2", "f1099int", "f1099div", "f1099b", "fw4",
+  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
@@ -230,7 +230,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   eq(1, "1040-12-deduction", k("line12"), deductionAmount(t));
 
   // Arithmetic chain
-  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line6b")) + n0(k("line7")) + n0(k("line8")));
+  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line4b")) + n0(k("line5b")) + n0(k("line6b")) + n0(k("line7")) + n0(k("line8")));
   eq(1, "1040-15-taxable-income", k("line15"), Math.max(0, n0(k("line11")) - n0(k("line14"))));
 
   // A dependent can't be born after the tax year
@@ -246,12 +246,13 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   const r = computeReturn(t);
   eq(2, "1040-7-capital-gain", k("line7"), r.capitalGain);
   const lineChecks: Array<[string, string, number]> = [
+    ["4b", "line4b", r.retirement.line4b], ["5b", "line5b", r.retirement.line5b],
     ["6a", "line6a", r.socialSecurity.line1], ["6b", "line6b", r.socialSecurity.taxable],
     ["8", "line8", r.additionalIncome], ["9", "line9", r.totalIncome], ["10", "line10", r.adjustments],
     ["11", "line11", r.agi], ["13", "line13", r.qbiDeduction], ["13b", "line13b", r.additionalDeductions], ["14", "line14", r.totalDeductions],
     ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
     ["19", "line19", r.childAndOtherDependentCredit], ["22", "line22", r.taxAfterCredits], ["23", "line23", r.otherTaxes],
-    ["24", "line24", r.totalTax], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
+    ["24", "line24", r.totalTax], ["25b", "line25b", r.form1099Withholding], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
     ["27", "line27", r.earnedIncomeCredit], ["28", "line28", r.additionalChildTaxCredit],
     ["31", "line31", r.scheduleThreePayments], ["32", "line32", r.refundableCredits], ["33", "line33", r.totalPayments],
     ["34", "line34", r.overpaid], ["35a", "line35a", r.refund], ["37", "line37", r.amountOwed],
@@ -408,6 +409,21 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
       if (bad.length) arith.push(`${run.label} line(s) ${bad.join(", ")}`);
     });
     checks.push({ phase: 2, id: "schC-lines-tie-out", ok: !arith.length, detail: arith.join("; ") || undefined });
+    // Standard mileage: the business share (business ÷ total miles) of the car loan interest and
+    // personal property tax sits on 16b / 23 on top of the listed amounts; line 9 holds neither.
+    const veh: string[] = [];
+    cDocs.forEach((run, i) => {
+      const b = r.scheduleC[i]?.business;
+      const v = b?.vehicle;
+      if (!b || !v || !(v.loanInterest || v.personalPropertyTax)) return;
+      const c = keyed(run, "f1040sc");
+      const miles = v.businessMiles + v.commutingMiles + v.otherMiles;
+      const pct = miles > 0 ? v.businessMiles / miles : 0;
+      const want16b = round2((b.expenses.otherInterest ?? 0) + (v.loanInterest ?? 0) * pct);
+      const want23 = round2((b.expenses.taxesLicenses ?? 0) + (v.personalPropertyTax ?? 0) * pct);
+      if (!near(n0(c("line16b")), want16b) || !near(n0(c("line23")), want23)) veh.push(`${run.label}: 16b ${c("line16b") || "(blank)"} vs ${money(want16b)}, 23 ${c("line23") || "(blank)"} vs ${money(want23)}`);
+    });
+    checks.push({ phase: 2, id: "schC-vehicle-costs-on-16b-23", ok: !veh.length, detail: veh.join("; ") || undefined });
     const total31 = sumBy(cDocs, (run) => keyed(run, "f1040sc")("line31"));
     tie(2, "schC-31-total-equals-sch1-3", total31, r.schedule1.businessIncome, "Σ Sch C 31 vs Schedule 1 line 3");
     // The profile drew a net figure first; its Schedule C detail must add back up to it.
@@ -427,11 +443,60 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "sch1-10-equals-1040-8", n0(s1("line10")), n0(line("line8")), "Schedule 1 line 10 vs 1040 line 8");
     tie(2, "sch1-26-equals-1040-10", n0(s1("line26")), n0(line("line10")), "Schedule 1 line 26 vs 1040 line 10");
     tie(2, "sch1-3-equals-schC-total", n0(s1("line3")), r.schedule1.businessIncome, "Schedule 1 line 3 vs Σ Sch C 31");
+    // Line 8g: the household's Alaska Permanent Fund dividends (a spouse's only on a joint return).
+    const pfd = (t.alaskaPermanentFundDividends?.primary ?? 0) + (t.filingStatus === "MFJ" ? t.alaskaPermanentFundDividends?.spouse ?? 0 : 0);
+    tie(2, "sch1-8g-equals-alaska-pfd", n0(s1("line8g")), pfd, "Schedule 1 line 8g vs household PFD");
+    tie(2, "sch1-9-equals-8a-8z", n0(s1("line9")), n0(s1("line8g")), "Schedule 1 line 9 vs line 8g (only 8g modelled)");
   }
   const s1a = keyed(docs.f1040s1a?.[0], "f1040s1a");
   if (docs.f1040s1a?.length) tie(2, "sch1A-38-equals-1040-13b", n0(s1a("line38")), n0(line("line13b")), "Schedule 1-A line 38 vs 1040 line 13b");
   const s2 = keyed(docs.f1040s2?.[0], "f1040s2");
   if (docs.f1040s2?.length) tie(2, "sch2-21-equals-1040-23", n0(s2("line21")), n0(line("line23")), "Schedule 2 line 21 vs 1040 line 23");
+  // ── Forms 1099-R → 1040 lines 4a–5b, 25b and Schedule 2 line 8 ─────────────
+  const rDocs = (docs.f1099r ?? []).map((run) => keyed(run, "f1099r"));
+  checks.push({ phase: 2, id: "1099r-one-per-distribution", ok: rDocs.length === r.retirement.records.length, detail: `${rDocs.length} 1099-R(s), return has ${r.retirement.records.length}` });
+  if (rDocs.length) {
+    const box = (d: (k: string) => string | undefined, k: string) => d(`CopyB.${k}`);
+    const isIra = (d: (k: string) => string | undefined) => box(d, "box7.iraSepSimple") === "Yes";
+    const code = (d: (k: string) => string | undefined) => box(d, "box7") ?? "";
+    // What each 1099-R puts on 4b/5b: box 2a, but nothing for a rollover (G) or qualified Roth (Q).
+    const taxable = (d: (k: string) => string | undefined) => (["G", "Q"].includes(code(d)) ? 0 : n0(box(d, "box2a")));
+    const fully = (d: (k: string) => string | undefined) => !["G", "Q"].includes(code(d)) && near(taxable(d), n0(box(d, "box1")));
+    const ties: string[] = [];
+    for (const [side, a, b] of [["ira", "line4a", "line4b"], ["pension", "line5a", "line5b"]] as const) {
+      const ds = rDocs.filter((d) => isIra(d) === (side === "ira"));
+      const gross = round2(ds.reduce((s, d) => s + n0(box(d, "box1")), 0));
+      const tax = round2(ds.reduce((s, d) => s + taxable(d), 0));
+      const blank = ds.every(fully);
+      if (!near(n0(line(b)), tax) || (ds.length > 0) !== ((line(b) ?? "") !== "")) ties.push(`${b} ${line(b) || "(blank)"} vs Σ taxable ${money(tax)}`);
+      if (blank ? (line(a) ?? "") !== "" : !near(n0(line(a)), gross)) ties.push(`${a} ${line(a) || "(blank)"} vs ${blank ? "blank (all fully taxable)" : `Σ box 1 ${money(gross)}`}`);
+    }
+    checks.push({ phase: 2, id: "1099r-boxes-feed-1040-4-5", ok: !ties.length, detail: ties.join("; ") || undefined });
+    tie(2, "1099r-box4-in-1040-25b", round2(rDocs.reduce((s, d) => s + n0(box(d, "box4")), 0)), r.retirement.federalWithheld, "Σ 1099-R box 4 vs return's 1099-R withholding");
+    const code1 = round2(rDocs.filter((d) => code(d) === "1").reduce((s, d) => s + taxable(d), 0));
+    const line8 = n0(s2("line8"));
+    const want8 = Math.round(code1 * 0.1 * 100) / 100;
+    checks.push({
+      phase: 2, id: "sch2-8-is-10pct-of-code-1", ok: near(line8, t.wholeDollars ? Math.round(want8) : want8) && (s2("line8.noForm5329") === "Yes") === line8 > 0,
+      detail: `line 8 ${s2("line8") || "(blank)"}, 10% of code 1 taxable ${money(want8)}, box ${s2("line8.noForm5329") || "off"}`,
+    });
+    // Codes have to fit the recipient's age at year end (59½ rule; 73 for RMDs isn't a code).
+    const birthYear = (dob: string | null) => Number((dob ?? "").split("/")[2]);
+    const badCode = r.retirement.records.filter((x) => {
+      const age = t.taxYear - birthYear(x.r.recipient === "spouse" ? t.spouseDateOfBirth : t.dateOfBirth);
+      const c = x.r.distributionCode;
+      return ((c === "7" || c === "Q") && age < 60) || ((c === "1" || c === "2") && age > 59);
+    }).map((x) => `${x.r.payerName} code ${x.r.distributionCode}`);
+    checks.push({ phase: 2, id: "1099r-code-fits-age", ok: !badCode.length, detail: badCode.join(", ") || undefined });
+    const badRecipient = r.retirement.records.filter((x, i) => {
+      const spouse = x.r.recipient === "spouse";
+      return digits(box(rDocs[i], "recipientTin") ?? "") !== digits((spouse ? t.spouseSSN : t.ssn) ?? "") || (spouse && t.filingStatus !== "MFJ");
+    }).map((x) => x.r.payerName);
+    checks.push({ phase: 1, id: "1099r-recipient-matches", ok: !badRecipient.length, detail: badRecipient.join(", ") || undefined });
+  }
+  // Schedule 2 line 13: W-2 box 12 codes A, B, M and N on the return's W-2s.
+  const box12 = round2(includedW2s(t).flatMap((w) => w.box12 ?? []).filter((e) => ["A", "B", "M", "N"].includes(e.code)).reduce((x, e) => x + e.amount, 0));
+  if (box12 || docs.f1040s2?.length) tie(2, "sch2-13-equals-w2-box12-abmn", n0(s2("line13")), box12, "Schedule 2 line 13 vs W-2 box 12 A/B/M/N");
   const s3 = keyed(docs.f1040s3?.[0], "f1040s3");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
   const m59 = keyed(docs.f8959?.[0], "f8959");
@@ -450,7 +515,8 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
       return !near(l11, Math.min(l3, l10)) || !near(n0(qa(`line13.${k}`)), Math.max(l11, l12));
     });
     checks.push({ phase: 2, id: "8995a-columns-tie-out", ok: !colBad.length, detail: colBad.length ? `column(s) ${colBad.join(", ")}` : undefined });
-    checks.push({ phase: 2, id: "8995a-businesses-fit", ok: r.scheduleC.length <= 3, detail: `${r.scheduleC.length} business(es); Form 8995-A has 3 columns` });
+    const nA = r.form8995A!.businesses.length;
+    checks.push({ phase: 2, id: "8995a-businesses-fit", ok: nA <= 3, detail: `${nA} qualified business(es); Form 8995-A has 3 columns` });
     const sa = keyed(docs.f8995aa?.[0], "f8995aa");
     if (docs.f8995aa?.length) {
       const sstbCols = r.form8995A!.businesses.map((b, i) => ({ b, k: ["A", "B", "C"][i] })).filter((x) => x.b.sstb);
@@ -466,7 +532,8 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const q = keyed(docs.f8995?.[0], "f8995");
   if (docs.f8995?.length) {
     tie(2, "8995-15-equals-1040-13", n0(q("line15")), n0(line("line13")), "Form 8995 line 15 vs 1040 line 13");
-    checks.push({ phase: 2, id: "8995-businesses-fit", ok: r.scheduleC.length <= 5, detail: `${r.scheduleC.length} business(es); Form 8995 has 5 rows` });
+    const n8 = r.form8995?.businessIndex.length ?? 0;
+    checks.push({ phase: 2, id: "8995-businesses-fit", ok: n8 <= 5, detail: `${n8} qualified business(es); Form 8995 has 5 rows` });
   }
 
   // ── Schedule D / Form 8949 ──────────────────────────────────────────────────

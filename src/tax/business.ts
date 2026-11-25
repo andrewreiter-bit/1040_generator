@@ -44,6 +44,15 @@ export interface ScheduleCLines {
   netProfit: number;            // 31
 }
 
+/** Business share (business ÷ total miles) of the vehicle's loan interest and personal property tax, unrounded. */
+export function vehicleBusinessShare(b: ScheduleCBusiness): { pct: number; interest: number; tax: number } {
+  const v = b.vehicle;
+  if (!v) return { pct: 0, interest: 0, tax: 0 };
+  const total = v.businessMiles + v.commutingMiles + v.otherMiles;
+  const pct = total > 0 ? v.businessMiles / total : 0;
+  return { pct, interest: (v.loanInterest ?? 0) * pct, tax: (v.personalPropertyTax ?? 0) * pct };
+}
+
 export function scheduleC(b: ScheduleCBusiness, taxYear: number, R: Rounder): ScheduleCLines {
   const sum = (xs: number[]) => sumWith(R, xs);
   const grossReceipts = R(b.grossReceipts);
@@ -59,6 +68,12 @@ export function scheduleC(b: ScheduleCBusiness, taxYear: number, R: Rounder): Sc
   expenseLines["9"] = b.vehicle
     ? R(b.vehicle.businessMiles * yearConstants(taxYear).standardMileageRate + b.vehicle.parkingTolls)
     : 0;
+  // Standard mileage: the business share of car loan interest and personal property tax is
+  // deductible too (Pub 463), but line 9 holds only miles × rate plus parking and tolls
+  // (Schedule C instructions, line 9), so the interest goes on 16b and the tax on 23.
+  const share = vehicleBusinessShare(b);
+  if (share.interest) expenseLines["16b"] = R(expenseLines["16b"] + share.interest);
+  if (share.tax) expenseLines["23"] = R(expenseLines["23"] + share.tax);
   expenseLines["24b"] = R((b.expenses.mealsTotal ?? 0) * 0.5);
   const totalExpenses = sum(Object.values(expenseLines));
   const tentativeProfit = R(grossIncome - totalExpenses);
@@ -143,6 +158,8 @@ export function businessDeductions(cs: ScheduleCLines[], ses: ScheduleSELines[],
 }
 
 export interface Form8995Lines {
+  /** Schedule C index of each line 1 row (qualified trades or businesses only). */
+  businessIndex: number[];
   qbiByBusiness: number[];      // 1c
   totalQbi: number;             // 2
   priorYearLoss: number;        // 3 (≤ 0)
@@ -160,7 +177,8 @@ export interface Form8995Lines {
 }
 
 export function form8995(
-  qbiByBusiness: number[], taxableIncomeBeforeQbi: number, netCapitalGain: number, t: FakeTaxpayer, R: Rounder
+  qbiByBusiness: number[], taxableIncomeBeforeQbi: number, netCapitalGain: number, t: FakeTaxpayer, R: Rounder,
+  businessIndex: number[] = qbiByBusiness.map((_, i) => i),
 ): Form8995Lines {
   const sum = (xs: number[]) => sumWith(R, xs);
   const thr = yearConstants(t.taxYear).qbiThreshold;
@@ -175,7 +193,7 @@ export function form8995(
   const incomeLimitation = R(reducedTaxableIncome * QBI_RATE);
   const deduction = Math.min(combinedComponent, incomeLimitation);
   return {
-    qbiByBusiness, totalQbi, priorYearLoss, netQbi, qbiComponent, combinedComponent,
+    businessIndex, qbiByBusiness, totalQbi, priorYearLoss, netQbi, qbiComponent, combinedComponent,
     taxableIncomeBeforeQbi, netCapitalGain, reducedTaxableIncome, incomeLimitation, deduction,
     lossCarryforward: Math.min(0, combined),
     overThreshold: taxableIncomeBeforeQbi > threshold,
@@ -224,6 +242,8 @@ export interface Form8995ALines {
 export function form8995A(
   cs: ScheduleCLines[], qbiByBusiness: number[], taxableIncomeBeforeQbi: number, netCapitalGain: number,
   t: FakeTaxpayer, R: Rounder,
+  /** Schedule C index of each entry in `cs` (when `cs` holds only the qualified businesses). */
+  indexes: number[] = cs.map((_, i) => i),
 ): Form8995ALines {
   const sum = (xs: number[]) => sumWith(R, xs);
   const joint = t.filingStatus === "MFJ";
@@ -240,7 +260,7 @@ export function form8995A(
     const sstb = !!c.business.sstb;
     const pct = sstb ? pctSstb : 1;
     return {
-      index: i, sstb, applicablePct: pct,
+      index: indexes[i], sstb, applicablePct: pct,
       rawQbi: R(qbiByBusiness[i]), rawW2: R(c.business.w2WagesPaid ?? 0), rawUbia: R(c.business.ubia ?? 0),
       qbi: R(qbiByBusiness[i] * pct),
       w2: R((c.business.w2WagesPaid ?? 0) * pct),
