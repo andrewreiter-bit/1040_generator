@@ -11,6 +11,7 @@ import { ALASKA_PFD, ssWageBase } from "./tax-year";
 import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "./schedule-c";
 import { addRetirementSavings, buildRetirement1099Rs } from "./retirement";
 import { buildDependentCare } from "./dependent-care";
+import { buildEducation } from "./education";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -260,6 +261,9 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   // Child care paid so the parents can work (Form 2441; last draws).
   const dependentCare = buildDependentCare(faker, taxpayer);
   if (dependentCare) taxpayer.dependentCare = dependentCare;
+  // College and graduate tuition (Forms 1098-T and 8863; last draws).
+  const education = buildEducation(faker, taxpayer);
+  if (education) taxpayer.education = education;
   return taxpayer;
 }
 

@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, DistributionCode, FakeTaxpayer, FilingStatus, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { isQualifyingChild } from "../tax/household";
 
@@ -48,7 +48,7 @@ export const SCORED_LINES: ScoredLine[] = [
   { line: "26",  element: "EstimatedTaxPaymentsAmt",        pick: (r) => r.estimatedPayments },
   { line: "27",  element: "EarnedIncomeCreditAmt",          pick: (r) => r.earnedIncomeCredit },
   { line: "28",  element: "AdditionalChildTaxCreditAmt",    pick: (r) => r.additionalChildTaxCredit },
-  { line: "29",  element: "RefundableAmerOppCreditAmt",     pick: () => 0 },
+  { line: "29",  element: "RefundableAmerOppCreditAmt",     pick: (r) => r.americanOpportunityCredit },
   { line: "32",  element: "RefundableCreditsAmt",           pick: (r) => r.refundableCredits },
   { line: "33",  element: "TotalPaymentsAmt",               pick: (r) => r.totalPayments },
   { line: "34",  element: "OverpaidAmt",                    pick: (r) => r.overpaid },
@@ -186,6 +186,10 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs1040\.(tp_blind|sp_blind)$/,
   // Form 2441: care providers and prior-year expenses paid this year (line 9b).
   /^irs2441\.(carryover|care_provider_grp\[\]\.(provider_name|street_address|city|state|zip|provider_ssn|provider_ein|paid_to_provider)|qualifying_person_grp\[\]\.(person|qualifying_expenses_paid))$/,
+  // Form 8863 (one institution per student).
+  /^irs8863\.(total_support_8863|either_parent_alive)$/,
+  /^irs8863\.student_educational_instn_grp\[\]\.(student|prior_year_credit_claimed|academic_period_eligible_student|post_secondary_education|drug_felony_conviction)$/,
+  /^irs8863\.student_educational_instn_grp\[\]\.educational_institution_group\[\]\.(institution_name|street_address|city|state|zip|current_year_1098t_received|prior_year_1098t_received|ein|qualified_expenses)$/,
   // Full-time student: no Saver's credit for that person (Form 8880).
   /^irs1040\.(tp_student|sp_student)$/,
   // Schedule 1: unemployment (1099-G), educator expenses, student loan interest.
@@ -521,6 +525,43 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     && dependents.some((d) => taxYear - d.birthYear < 13 || (d.disabled && d.monthsInHome > 6))) {
     outOfScope.add("Form 2441 care for a qualifying person without per-person expenses");
   }
+  // Form 8863: the qualified expenses given are the adjusted expenses (no scholarships split out).
+  const educationGroups = list(rd.irs8863, "student_educational_instn_grp");
+  let education: Education | undefined;
+  if (educationGroups.length) {
+    const students: EducationStudent[] = [];
+    for (const g of educationGroups) {
+      const ref = String(val(g, "student") ?? "");
+      const who: EducationStudent["student"] | undefined =
+        ref === "taxpayer_info" ? "primary" : ref === "spouse_info" ? "spouse" : dependents.length === 1 ? 0 : undefined;
+      if (who === undefined) outOfScope.add("Form 8863 student who is one of several dependents (the reference can't be resolved)");
+      const insts = list(g, "educational_institution_group");
+      if (insts.length > 1) outOfScope.add("Form 8863 student with more than one institution (line 22b)");
+      const inst = insts[0];
+      students.push({
+        student: who ?? "primary",
+        institution: {
+          name: String(val(inst, "institution_name") ?? ""), street: String(val(inst, "street_address") ?? ""),
+          city: [val(inst, "city"), val(inst, "state"), val(inst, "zip")].filter(Boolean).join(" "), ein: String(val(inst, "ein") ?? ""),
+        },
+        tuitionPaid: num(val(inst, "qualified_expenses")), scholarships: 0,
+        received1098T: val(inst, "current_year_1098t_received") === true,
+        halfTime: val(g, "academic_period_eligible_student") === true, graduate: false,
+        completedFirst4Years: val(g, "post_secondary_education") === true,
+        aotcPriorYears: val(g, "prior_year_credit_claimed") === true ? 4 : 0,
+        felonyDrugConviction: val(g, "drug_felony_conviction") === true,
+      });
+    }
+    // Line 7: a filer under 24 with a living parent, not filing jointly, and under 18 (or 18–23
+    // with earned income under half their support) gets the AOTC only as a nonrefundable credit.
+    const tpAge = taxYear - Number(String(val(f1040, "tp_date_of_birth") ?? "").slice(0, 4));
+    const earned = w2Records.filter((w) => w.employee !== "spouse").reduce((x, w) => x + w.wages, 0);
+    const halfSupport = num(val(rd.irs8863, "total_support_8863")) / 2;
+    const parentAlive = val(rd.irs8863, "either_parent_alive") === true;
+    const nonrefundableOnly = tpAge < 24 && parentAlive && status !== "MFJ"
+      && (tpAge < 18 || earned < halfSupport);
+    education = { students, aotcNonrefundableOnly: nonrefundableOnly || undefined };
+  }
   for (const k of ["tp_dependent", "sp_dependent", "eic_not_allowed", "qualifying_child_of_another"]) {
     if (val(f1040, k) === true) outOfScope.add(`irs1040.${k}`);
   }
@@ -567,6 +608,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     ssa1099s,
     retirement1099Rs: retirement1099Rs.length ? retirement1099Rs : undefined,
     dependentCare,
+    education,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }
       : undefined,

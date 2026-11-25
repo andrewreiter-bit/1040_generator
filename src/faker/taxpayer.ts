@@ -283,6 +283,47 @@ export interface DependentCare {
   priorYearExpensesPaid?: number;
 }
 
+/** An eligible educational institution (Form 8863 line 22, Form 1098-T filer). */
+export interface EducationInstitution {
+  name: string;
+  street: string;
+  /** "City, ST ZIP". */
+  city: string;
+  ein: string;
+}
+
+/** One student's education expenses for Form 8863 Part III (and their Form 1098-T). */
+export interface EducationStudent {
+  /** Whose education: the filer, the spouse, or a dependent (index into `dependents`). */
+  student: "primary" | "spouse" | number;
+  institution: EducationInstitution;
+  /** 1098-T box 1: payments received for qualified tuition and related expenses. */
+  tuitionPaid: number;
+  /** 1098-T box 5: scholarships or grants (reduce qualified expenses). */
+  scholarships: number;
+  /** Required course materials bought elsewhere (count for the American opportunity credit only). */
+  courseMaterials?: number;
+  /** Got a 1098-T from the institution for the year (line 22a(2)). Omitted = yes. */
+  received1098T?: boolean;
+  /** At least half-time in a degree program (1098-T box 8; line 24). */
+  halfTime: boolean;
+  /** Graduate student (1098-T box 9). */
+  graduate: boolean;
+  /** Completed the first 4 years of postsecondary education before the year (line 25). */
+  completedFirst4Years: boolean;
+  /** Tax years the American opportunity credit was already claimed for the student (line 23: 4 → none). */
+  aotcPriorYears: number;
+  /** Felony drug conviction (line 26). Omitted = no. */
+  felonyDrugConviction?: boolean;
+}
+
+/** Education credits (Form 8863). */
+export interface Education {
+  students: EducationStudent[];
+  /** Line 7 box: the filer is under 24 and meets the conditions that make the AOTC nonrefundable only. */
+  aotcNonrefundableOnly?: boolean;
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -301,6 +342,8 @@ export interface DocumentContext {
   saleIndex?: number;
   /** Which Form 1099-R (index into computeReturn(source).retirement.records). */
   retirementIndex?: number;
+  /** Which education student (index into source.education.students): Form 1098-T, Form 8863 page 2. */
+  educationIndex?: number;
 }
 
 export interface FakeTaxpayer {
@@ -359,6 +402,8 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Education credits: students, institutions and expenses (Form 8863, Forms 1098-T). */
+  education?: Education;
   /** Child and dependent care expenses and providers (Form 2441). */
   dependentCare?: DependentCare;
   /** Roth IRA contributions for the year, per person (Form 8880 line 1; not deductible). */
