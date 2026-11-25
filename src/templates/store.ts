@@ -4,10 +4,10 @@ import { FormTemplate } from "./schema";
 import { AnalyzedForm } from "../analyzer/index";
 import { FormEntry } from "../registry/forms";
 import { parseFormula, extractLineNumber } from "./formula-parser";
-
-const TEMPLATES_DIR = path.resolve(process.cwd(), "templates");
+import { templatesDir } from "../config/paths";
 
 export async function saveTemplate(template: FormTemplate): Promise<string> {
+  const TEMPLATES_DIR = templatesDir();
   await fs.ensureDir(TEMPLATES_DIR);
   const filePath = path.join(TEMPLATES_DIR, `${template.formId}.json`);
   await fs.writeJson(filePath, template, { spaces: 2 });
@@ -15,7 +15,7 @@ export async function saveTemplate(template: FormTemplate): Promise<string> {
 }
 
 export async function loadTemplate(formId: string): Promise<FormTemplate> {
-  const filePath = path.join(TEMPLATES_DIR, `${formId}.json`);
+  const filePath = path.join(templatesDir(), `${formId}.json`);
   if (!(await fs.pathExists(filePath))) {
     throw new Error(`No template found for ${formId}. Run 'npm run analyze' first.`);
   }
@@ -23,10 +23,11 @@ export async function loadTemplate(formId: string): Promise<FormTemplate> {
 }
 
 export async function templateExists(formId: string): Promise<boolean> {
-  return fs.pathExists(path.join(TEMPLATES_DIR, `${formId}.json`));
+  return fs.pathExists(path.join(templatesDir(), `${formId}.json`));
 }
 
 export async function listTemplates(): Promise<string[]> {
+  const TEMPLATES_DIR = templatesDir();
   await fs.ensureDir(TEMPLATES_DIR);
   const files = await fs.readdir(TEMPLATES_DIR);
   return files.filter((f) => f.endsWith(".json")).map((f) => f.replace(".json", ""));

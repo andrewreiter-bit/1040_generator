@@ -3,6 +3,7 @@ import { runForm } from "./runner";
 import { createTaxpayer } from "../faker/factory";
 import { FillResult } from "../filler/index";
 import { FORM_REGISTRY, FormEntry, getForm } from "../registry/forms";
+import { documentsFor, scheduleGaps } from "../tax/documents";
 
 /** A form with an optional per-form submission count override. */
 export interface FormSpec {
@@ -39,8 +40,13 @@ export interface BatchResult {
   totalAttempted: number;
   totalSucceeded: number;
   totalFailed: number;
-  results: Array<{ submission: number; seed: number } & FillResult>;
+  /** docIndex/docCount: position among this household's documents of the form (W-2 #2 of 2, …). */
+  results: Array<{ submission: number; seed: number; docIndex: number; docCount: number; docLabel: string } & FillResult>;
   errors: Array<{ formId: string; submission: number; error: string }>;
+  /** Forms with no document for a household (e.g. 1099-INT when it has no interest payers). */
+  noDocuments: Array<{ formId: string; submission: number }>;
+  /** Schedules the return needs but that have no field map for its tax year (wrong-year PDF). */
+  missingSchedules: Array<{ formId: string; submission: number; taxYear: number }>;
 }
 
 /** Normalise the `forms` / `formIds` option into a list of FormSpecs. */
@@ -73,6 +79,8 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
   const limit = pLimit(concurrency);
   const results: BatchResult["results"] = [];
   const errors:  BatchResult["errors"]  = [];
+  const noDocuments: BatchResult["noDocuments"] = [];
+  const missingSchedules: BatchResult["missingSchedules"] = [];
 
   // Pre-generate a pool of taxpayers large enough for the largest per-form count
   const maxCount = Math.max(globalCount, ...formSpecs.map((s) => s.count ?? globalCount));
@@ -96,25 +104,41 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
 
     for (let i = 0; i < formCount; i++) {
       const { index, taxpayer } = taxpayers[i];
-      tasks.push(
-        limit(async () => {
-          try {
-            const result = await runForm({
-              formId: form.id,
-              taxpayer,
-              forceReanalyze: forceReanalyze && index === 0,
-              runId: formCount > 1 ? index : undefined,
-            });
-            results.push({ submission: index, seed: taxpayer.seed, ...result });
-          } catch (err) {
-            errors.push({
-              formId: form.id,
-              submission: index,
-              error: (err as Error).message,
-            });
-          }
-        })
-      );
+      const docs = documentsFor(form.id, taxpayer);
+      if (docs.length === 0) {
+        if (scheduleGaps(taxpayer).includes(form.id)) {
+          missingSchedules.push({ formId: form.id, submission: index, taxYear: taxpayer.taxYear });
+        } else {
+          noDocuments.push({ formId: form.id, submission: index });
+        }
+        continue;
+      }
+      for (const doc of docs) {
+        tasks.push(
+          limit(async () => {
+            try {
+              const result = await runForm({
+                formId: form.id,
+                taxpayer: doc.view,
+                forceReanalyze: forceReanalyze && index === 0 && doc.index === 1,
+                runId: formCount > 1 ? index : undefined,
+                docSuffix: doc.count > 1 ? `doc${doc.index}` : undefined,
+              });
+              results.push({
+                submission: index, seed: taxpayer.seed,
+                docIndex: doc.index, docCount: doc.count, docLabel: doc.label,
+                ...result,
+              });
+            } catch (err) {
+              errors.push({
+                formId: form.id,
+                submission: index,
+                error: `${doc.label}: ${(err as Error).message}`,
+              });
+            }
+          })
+        );
+      }
     }
   }
 
@@ -126,6 +150,8 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
     totalFailed: errors.length,
     results,
     errors,
+    noDocuments,
+    missingSchedules,
   };
 }
 

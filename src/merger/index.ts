@@ -1,8 +1,8 @@
 import { PDFDocument } from "pdf-lib";
 import fs from "fs-extra";
 import path from "path";
+import { outputDir } from "../config/paths";
 
-const OUTPUT_DIR = path.resolve(process.cwd(), "output");
 
 /**
  * Merges multiple filled PDF files into a single multi-page PDF.
@@ -15,6 +15,7 @@ export async function mergePdfs(
   inputPaths: string[],
   outputName?: string
 ): Promise<string> {
+  const OUTPUT_DIR = outputDir();
   await fs.ensureDir(OUTPUT_DIR);
 
   const merged = await PDFDocument.create();

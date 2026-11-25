@@ -92,6 +92,16 @@ export const FORM_REGISTRY: FormEntry[] = [
     "Income Averaging for Farmers and Fishermen",
   ),
   irs("f1040sse", "Schedule SE", "schedule", "Self-Employment Tax"),
+  irs(
+    "f1040s8",
+    "Schedule 8812",
+    "schedule",
+    "Credits for Qualifying Children and Other Dependents",
+  ),
+  irs("f1040sei", "Schedule EIC", "schedule", "Earned Income Credit"),
+  irs("f1040s1a", "Schedule 1-A", "schedule", "Additional Deductions (2025–2028)"),
+  irs("f8995aa", "Schedule A (Form 8995-A)", "supporting", "Specified Service Trades or Businesses"),
+  irs("f8995ac", "Schedule C (Form 8995-A)", "supporting", "Loss Netting and Carryforward"),
 
   // ═══════════════════════════════════════════════════════════════════════════
   // B. INDIVIDUAL SUPPORTING FORMS
@@ -153,7 +163,7 @@ export const FORM_REGISTRY: FormEntry[] = [
     "f8812",
     "Form 8812",
     "supporting",
-    "Credits for Qualifying Children and Other Dependents",
+    "Additional Child Tax Credit (pre-2018 standalone form; use f1040s8 for Schedule 8812)",
   ),
   irs(
     "f8814",

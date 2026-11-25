@@ -10,6 +10,8 @@ export interface RunOptions {
   taxpayer: FakeTaxpayer;
   forceReanalyze?: boolean;
   runId?: string | number;
+  /** Set when the household has several documents of this form (e.g. "doc2"). */
+  docSuffix?: string;
 }
 
 /**
@@ -17,7 +19,7 @@ export interface RunOptions {
  *   download (cached) → analyze → build/load template → fill → write output
  */
 export async function runForm(opts: RunOptions): Promise<FillResult> {
-  const { formId, taxpayer, forceReanalyze, runId } = opts;
+  const { formId, taxpayer, forceReanalyze, runId, docSuffix } = opts;
   const formEntry = getForm(formId);
 
   // 1. Download (uses cache if available)
@@ -35,5 +37,5 @@ export async function runForm(opts: RunOptions): Promise<FillResult> {
   const template = await loadTemplate(formId);
 
   // 4. Fill
-  return fillForm(template, taxpayer, runId);
+  return fillForm(template, taxpayer, runId, docSuffix);
 }

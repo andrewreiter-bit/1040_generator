@@ -9,16 +9,36 @@ export interface LineIndex {
   orderedKeys: string[];
 }
 
+/** Labels of the text box that sits next to a line's amount ("16. 3. (specify)", "1h … Enter type"). */
+const COMPANION_LABEL = /specify|enter number|enter type|list type|\btype\.?$|form \(enter/i;
+
+/**
+ * How well a field represents its line's amount. When several fields share a
+ * line number, formulas read the highest-scoring one (first wins on ties).
+ * Checkboxes never hold amounts, so they are not indexed at all.
+ */
+function amountScore(f: FieldDefinition): number {
+  if (f.fieldType !== "dollar_amount") return 0;
+  return COMPANION_LABEL.test(f.labelHint) ? 1 : 2;
+}
+
 export function buildLineIndex(fields: FieldDefinition[]): LineIndex {
   const byLine      = new Map<string, string>();
   const byField     = new Map<string, number>();
   const orderedKeys: string[] = [];
+  const bestScore   = new Map<string, number>();
 
   fields.forEach((f, i) => {
     byField.set(f.pdfFieldName, i);
-    if (f.lineNumber && !byLine.has(f.lineNumber)) {
-      byLine.set(f.lineNumber, f.pdfFieldName);
+    if (!f.lineNumber || f.fieldType === "checkbox") return;
+    const score = amountScore(f);
+    const prev = bestScore.get(f.lineNumber);
+    if (prev === undefined) {
       orderedKeys.push(f.lineNumber);
+    }
+    if (prev === undefined || score > prev) {
+      byLine.set(f.lineNumber, f.pdfFieldName);
+      bestScore.set(f.lineNumber, score);
     }
   });
 

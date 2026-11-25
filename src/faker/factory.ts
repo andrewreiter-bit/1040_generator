@@ -7,6 +7,11 @@ import {
   Dividend1099,
   FilingStatus,
 } from "./taxpayer";
+import { ALASKA_PFD, ssWageBase } from "./tax-year";
+import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "./schedule-c";
+import { buildRetirement1099Rs } from "./retirement";
+import { buildCapitalSales } from "./capital";
+import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -67,10 +72,12 @@ function fakeDollar(faker: Faker, min: number, max: number): number {
 
 // ─── Dependent Builder ────────────────────────────────────────────────────────
 
-function buildDependent(faker: Faker, taxpayerBirthYear: number): Dependent {
-  const birthYear = taxpayerBirthYear + faker.number.int({ min: 20, max: 35 });
-  // Make sure child is actually younger
-  const childBirthYear = new Date().getFullYear() - faker.number.int({ min: 0, max: 17 });
+function buildDependent(faker: Faker, taxYear: number): Dependent {
+  // Unused, but kept so every later draw (and so every seed's household) stays the same.
+  faker.number.int({ min: 20, max: 35 });
+  // Age 0–17 at the end of the tax year (not "today"), so no child is born after the
+  // tax year and the same seed gives the same household whenever it runs.
+  const childBirthYear = taxYear - faker.number.int({ min: 0, max: 17 });
   return {
     firstName: faker.person.firstName(),
     lastName: faker.person.lastName(),
@@ -78,17 +85,17 @@ function buildDependent(faker: Faker, taxpayerBirthYear: number): Dependent {
     relationship: "Child",
     birthYear: childBirthYear,
     monthsInHome: faker.number.int({ min: 6, max: 12 }),
-    qualifiesChildTaxCredit: childBirthYear > new Date().getFullYear() - 17,
+    qualifiesChildTaxCredit: childBirthYear > taxYear - 17, // informational; credits use tax/household
     qualifiesOtherDependent: false,
   };
 }
 
 // ─── W-2 Builder ─────────────────────────────────────────────────────────────
 
-function buildW2(faker: Faker, state: string): W2Record {
+function buildW2(faker: Faker, state: string, taxYear: number): W2Record {
   const wages = fakeDollar(faker, 25000, 150000);
   const federalWithheld = Math.round(wages * faker.number.float({ min: 0.12, max: 0.24, fractionDigits: 3 }) * 100) / 100;
-  const ssWages = Math.min(wages, 176100); // 2025 SS wage base
+  const ssWages = Math.min(wages, ssWageBase(taxYear));
   const ssWithheld = Math.round(ssWages * 0.062 * 100) / 100;
   const medicareWages = wages;
   const medicareWithheld = Math.round(wages * 0.0145 * 100) / 100;
@@ -132,7 +139,9 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
 
   // W-2s: 1-2 records
   const w2Count = faker.number.int({ min: 1, max: 2 });
-  const w2Records: W2Record[] = Array.from({ length: w2Count }, () => buildW2(faker, state));
+  // On a joint return the second W-2 belongs to the spouse (no extra RNG draws).
+  const w2Records: W2Record[] = Array.from({ length: w2Count }, () => buildW2(faker, state, taxYear))
+    .map((w, i) => (i === 1 && filingStatus === "MFJ" ? { ...w, employee: "spouse" as const } : w));
   const totalWages = w2Records.reduce((s, w) => s + w.wages, 0);
 
   // 1099-INTs: 0-2
@@ -163,11 +172,11 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
 
   // Dependents: 0-3
   const depCount = faker.number.int({ min: 0, max: 3 });
-  const dependents: Dependent[] = Array.from({ length: depCount }, () => buildDependent(faker, birthYear));
+  const dependents: Dependent[] = Array.from({ length: depCount }, () => buildDependent(faker, taxYear));
 
   const takesStandard = faker.datatype.boolean({ probability: 0.87 });
 
-  return {
+  const taxpayer: FakeTaxpayer = {
     seed: resolvedSeed,
     taxYear,
     firstName,
@@ -209,6 +218,43 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
       ? `P${faker.string.numeric(8)}`
       : null,
   };
+  // Schedule C detail behind the drawn net figure. These draws come after every
+  // existing draw so a given seed still produces the same household.
+  if (taxpayer.businessIncome != null) {
+    taxpayer.scheduleCs = [buildScheduleC(faker, taxpayer.businessIncome, taxYear)];
+  }
+  // Brokerage sales behind the drawn net capital gain (also after every existing draw).
+  if (taxpayer.capitalGains != null) {
+    taxpayer.capitalSales = buildCapitalSales(faker, taxpayer.capitalGains, taxYear);
+  }
+  // Schedule A and Schedule E detail behind the drawn totals (also after every existing draw).
+  if (!taxpayer.takesStandardDeduction && taxpayer.itemizedDeductionTotal != null) {
+    taxpayer.itemized = buildItemized(faker, taxpayer, taxpayer.itemizedDeductionTotal);
+  }
+  if (taxpayer.rentalIncome != null) {
+    taxpayer.rentals = [buildRental(faker, taxpayer.rentalIncome)];
+  }
+  // SSA-1099 behind the drawn benefits, and a rare blind taxpayer (also after every existing draw).
+  if (taxpayer.socialSecurityBenefits != null) {
+    taxpayer.ssa1099s = [buildSsa1099(faker, taxpayer.socialSecurityBenefits)];
+  }
+  taxpayer.blind = faker.datatype.boolean({ probability: 0.02 });
+  // About a quarter of rentals run at a loss (Form 8582 passive limits); last draw, so nothing earlier moves.
+  if (taxpayer.rentals?.length && faker.datatype.boolean({ probability: 0.25 })) {
+    taxpayer.rentalIncome = makeRentalLoss(faker, taxpayer.rentals[0]);
+  }
+  // Payroll and qualified property for Form 8995-A (last draws, so nothing earlier moves).
+  if (taxpayer.scheduleCs?.length) addBusinessPayrollAndProperty(faker, taxpayer.scheduleCs[0]);
+  // Pension / IRA distributions by age (Forms 1099-R); last draws, so nothing earlier moves.
+  const retirement1099Rs = buildRetirement1099Rs(faker, taxpayer);
+  if (retirement1099Rs.length) taxpayer.retirement1099Rs = retirement1099Rs;
+  // Alaska residents get the year's Permanent Fund dividend (Schedule 1 line 8g; no random draws).
+  if (taxpayer.state === "AK" && ALASKA_PFD[taxYear]) {
+    taxpayer.alaskaPermanentFundDividends = { primary: ALASKA_PFD[taxYear], spouse: taxpayer.spouseSSN ? ALASKA_PFD[taxYear] : undefined };
+  }
+  // Car loan interest / personal property tax on the business vehicle (last draws; line 31 unchanged).
+  if (taxpayer.scheduleCs?.length) addVehicleCosts(faker, taxpayer.scheduleCs[0], taxYear);
+  return taxpayer;
 }
 
 function age(dob: string): number {

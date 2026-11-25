@@ -12,6 +12,7 @@ import path from "path";
 import { FORM_REGISTRY } from "../src/registry/forms";
 import { analyzeForm } from "../src/analyzer/index";
 import { buildTemplate, saveTemplate } from "../src/templates/store";
+import { formsDir } from "../src/config/paths";
 
 const program = new Command();
 program
@@ -30,7 +31,7 @@ const targets = opts.forms
   let ok = 0, fail = 0;
 
   for (const form of targets) {
-    const pdfPath = path.resolve(process.cwd(), "forms", `${form.id}.pdf`);
+    const pdfPath = path.join(formsDir(), `${form.id}.pdf`);
     try {
       const analyzed = await analyzeForm(form.id, pdfPath);
       const template = buildTemplate(form, analyzed, taxYear);

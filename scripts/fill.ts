@@ -15,6 +15,7 @@ import chalk from "chalk";
 import path from "path";
 import { runBatch, parseFormSpecs } from "../src/pipeline/batch";
 import { mergePdfs } from "../src/merger/index";
+import { outputDir } from "../src/config/paths";
 
 const program = new Command();
 program
@@ -47,6 +48,15 @@ const opts = program.opts();
 
   console.log(chalk.bold("\nSummary:"));
   console.log(chalk.green(`  ✓ ${result.totalSucceeded} PDFs filled`));
+  if (result.noDocuments.length > 0) {
+    const ids = [...new Set(result.noDocuments.map((n) => n.formId))].join(", ");
+    console.log(chalk.gray(`  – no document needed for: ${ids} (household has no matching records)`));
+  }
+  if (result.missingSchedules.length > 0) {
+    const ids = [...new Set(result.missingSchedules.map((n) => n.formId))].join(", ");
+    const year = result.missingSchedules[0].taxYear;
+    console.log(chalk.yellow(`  ! NOT INCLUDED but the return needs: ${ids} — no ${year} field map (that year's PDF is missing or the wrong revision). The 1040 totals still include them.`));
+  }
   if (result.totalFailed > 0) {
     console.log(chalk.red(`  ✗ ${result.totalFailed} failed`));
     result.errors.forEach((e) =>
@@ -58,7 +68,7 @@ const opts = program.opts();
   if (opts.merge && result.results.length > 0) {
     // Sort by form ID then submission index for a predictable page order
     const sorted = [...result.results].sort((a, b) =>
-      a.formId.localeCompare(b.formId) || a.submission - b.submission
+      a.formId.localeCompare(b.formId) || a.submission - b.submission || a.docIndex - b.docIndex
     );
     const paths = sorted.map((r) => r.outputPath);
     const name  = opts.mergeName ?? undefined;
@@ -72,5 +82,5 @@ const opts = program.opts();
     }
   }
 
-  console.log(chalk.gray(`\n  Output → ${path.resolve(process.cwd(), "output")}\n`));
+  console.log(chalk.gray(`\n  Output → ${outputDir()}\n`));
 })();
