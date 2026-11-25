@@ -76,9 +76,11 @@ function buildScheduleD(taxYear: number): FieldMap {
   add(`${P2}c2_1[1]`, "line17.no", (s) => checkIf(gainPath(s) && !s.bothGains));
   add(`${P2}${g(2)}`, "line18", (s) => (gainPath(s) && s.bothGains ? money(0) : BLANK));
   add(`${P2}${g(3)}`, "line19", (s) => (gainPath(s) && s.bothGains ? money(0) : BLANK));
-  // Line 20: 18 and 19 are both zero → "Yes" (Qualified Dividends and Capital Gain Tax Worksheet).
-  add(`${P2}c2_2[0]`, "line20.yes", (s) => checkIf(gainPath(s) && s.bothGains));
-  add(`${P2}c2_2[1]`, "line20.no", () => OFF);
+  // Line 20: "Are lines 18 and 19 both zero or blank and you are not filing Form 4952?" Yes → the
+  // Qualified Dividends and Capital Gain Tax Worksheet; filing Form 4952 → No (Schedule D Tax Worksheet).
+  const files4952 = (t: FakeTaxpayer) => !!computeReturn(t).form4952?.required;
+  add(`${P2}c2_2[0]`, "line20.yes", (s, t) => checkIf(gainPath(s) && s.bothGains && !files4952(t)));
+  add(`${P2}c2_2[1]`, "line20.no", (s, t) => checkIf(gainPath(s) && s.bothGains && files4952(t)));
   add(y25 ? `${P2}${g(4)}` : `${P2}TagCorrectingSubform[0].${g(4)}`, "line21", (s) => (s.line16 < 0 ? money(-s.line21) : BLANK));
   add(`${P2}c2_3[0]`, "line22.yes", (s, t) => checkIf(askLine22(s) && hasQualDiv(t)));
   add(`${P2}c2_3[1]`, "line22.no", (s, t) => checkIf(askLine22(s) && !hasQualDiv(t)));

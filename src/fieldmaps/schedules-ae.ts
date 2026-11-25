@@ -66,6 +66,7 @@ function scheduleA(taxYear: number): FieldMap {
     "8a": (r) => moneyOrBlank(a(r)?.line8a),
     "8c": (r) => moneyOrBlank(a(r)?.line8c),
     "8e": (r) => moneyOrBlank(a(r)?.line8e),
+    "9": (r) => moneyOrBlank(a(r)?.line9),
     "10": (r) => moneyOrBlank(a(r)?.line10),
     "11": (r) => moneyOrBlank(a(r)?.line11),
     "12": (r) => moneyOrBlank(a(r)?.line12),

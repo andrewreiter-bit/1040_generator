@@ -394,6 +394,16 @@ export interface HsaAccount {
   };
 }
 
+/** Investment interest (Form 4952). */
+export interface InvestmentInterest {
+  /** Line 1: investment interest paid or accrued this year. */
+  paid: number;
+  /** Line 2: disallowed investment interest carried from last year's line 7. */
+  priorYearDisallowed?: number;
+  /** Line 4g: qualified dividends and net capital gain elected as investment income (capped at 4b + 4e). */
+  electedQdcg?: number;
+}
+
 /** Form W-2G, gambling winnings (Schedule 1 line 8b; box 4 withholding → Form 1040 line 25c). */
 export interface GamblingWinnings {
   recipient: "primary" | "spouse";
@@ -489,6 +499,8 @@ export interface FakeTaxpayer {
   unemployment1099Gs?: Unemployment1099G[];
   /** Health savings accounts, per person (Form 8889). Employer contributions are W-2 box 12 code W. */
   hsa?: { primary?: HsaAccount; spouse?: HsaAccount };
+  /** Investment interest expense (Form 4952 → Schedule A line 9). */
+  investmentInterest?: InvestmentInterest;
   /** Forms W-2G (gambling winnings). */
   gamblingWinnings?: GamblingWinnings[];
   /** Incentive stock option exercises (Forms 3921 → Form 6251 line 2i). */

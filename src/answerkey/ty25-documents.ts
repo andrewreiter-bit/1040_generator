@@ -26,7 +26,11 @@ function readPdf(file: string): { values: Run[]; labels: Label[] } {
   return JSON.parse(execFileSync("python3", ["-I", HELPER, file], { encoding: "utf8", maxBuffer: 16 << 20 }));
 }
 
-const BOX = /^(\d{1,2}[a-f]?)\b/;
+// Box numbers with a letter: up to 1h (1099-B uses 1a–1g; W-2 12a–12d).
+const BOX = /^(\d{1,2}[a-h]?)\b/;
+
+/** Boxes where more than one amount landed (a misread layout); collected per case. */
+let ambiguousBoxes: string[] = [];
 
 /** Box number → the values under it (by position: nearest box number above, in the same column). */
 function boxes(doc: { values: Run[]; labels: Label[] }): Map<string, Run[]> {
@@ -61,7 +65,11 @@ class Doc {
   readonly boxes: Map<string, Run[]>;
   constructor(readonly file: string, readonly raw: { values: Run[]; labels: Label[] }) { this.boxes = boxes(raw); }
   text(box: string, i = 0): string { return this.boxes.get(box)?.[i]?.lines.join(" ") ?? ""; }
-  amount(box: string): number { return money(this.text(box)); }
+  amount(box: string): number {
+    const numeric = (this.boxes.get(box) ?? []).filter((r) => !isNaN(money(r.lines.join(" "))) && /\d/.test(r.lines.join("")));
+    if (numeric.length > 1) ambiguousBoxes.push(`${path.basename(this.file)} box ${box}`);
+    return money(this.text(box));
+  }
   /** Box 12-style code/amount pairs: the alphabetic run is the code, the other the amount. */
   pairs(box: string): Array<{ code: string; amount: number }> {
     const runs = [...(this.boxes.get(box) ?? [])].sort((a, b) => a.x - b.x);
@@ -102,13 +110,14 @@ function priorYearNames(file: string | undefined): { tp: string; sp: string } {
 const sameName = (a: string, b: string) => !!a && !!b && a.trim().split(/\s+/)[0].toLowerCase() === b.trim().split(/\s+/)[0].toLowerCase();
 
 /** Kinds read into answers; any other PDF makes the case out of scope. */
-const READ_KINDS = new Set(["w2", "1099int", "1099div", "w2g", "1099nec", "1040"]);
+const READ_KINDS = new Set(["w2", "1099int", "1099div", "w2g", "1099nec", "1098", "1099b", "1040"]);
 
 /**
  * Merge a TY25 case's source documents into its `remaining_data.json` answers, in TY24's layout.
  * `rd` is the case's `input.return_data` and is modified in place.
  */
 export function mergeSourceDocuments(inputDir: string, rd: Record<string, unknown>): void {
+  ambiguousBoxes = [];
   const files = fs.readdirSync(inputDir).filter((f) => f.endsWith(".pdf")).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   const kindOf = (f: string) => f.replace(/\.pdf$/, "").replace(/_.*$/, "").replace(/^1040$/, "1040");
   const byKind = (k: string) => files.filter((f) => kindOf(f) === k).map((f) => path.join(inputDir, f));
@@ -216,6 +225,54 @@ export function mergeSourceDocuments(inputDir: string, rd: Record<string, unknow
       });
     }
   }
+  // Form 1098: box 1 interest and box 6 points (both Schedule A line 8a); box 2 outstanding
+  // principal is kept for the § 163(h)(3) limit check; boxes 3, 7–9 and 11 are informational.
+  rd.f1098 = byKind("1098").map((file) => {
+    const d = new Doc(file, readPdf(file));
+    return {
+      mortgage_interest: leaf(d.amount("1")), outstanding_principal: leaf(d.amount("2")), points: leaf(d.amount("6")),
+      ...d.unmodelled("f1098", ["1", "2", "3", "6", "7", "8", "9", "11"]),
+    };
+  });
+
+  // 1099-B: one sale per form, filling the JSON's irs8949 transactions in order. The Form 8949
+  // category letter printed at the top (A/B/C short-term, D/E/F long-term) gives the term and
+  // whether basis was reported; box 2's checkbox is the fallback for the term.
+  const sales = byKind("1099b");
+  const groups = (rd.irs8949 as { irs1099_b_grp?: Array<Record<string, unknown>> } | undefined)?.irs1099_b_grp ?? [];
+  const slots = groups.flatMap((g) => (Array.isArray(g.irs1099_b) ? (g.irs1099_b as Array<Record<string, unknown>>) : []).map((s) => ({ g, s })));
+  if (sales.length && slots.length !== sales.length) extra.source_document_1099b_count_mismatch = leaf(`${sales.length} PDFs, ${slots.length} answers`);
+  else sales.forEach((file, i) => {
+    const d = new Doc(file, readPdf(file));
+    const { g, s } = slots[i];
+    const letter = d.at(297.4, 736.8, 4).trim().toUpperCase();
+    const box2 = (d.boxes.get("2") ?? []).find((r) => /^x$/i.test(r.lines[0]));
+    const captions = d.raw.labels.filter((l) => /^(Short-term|Long-term|Ordinary)/.test(l.text));
+    const term = box2 ? [...captions].sort((a, b) => Math.abs(a.y - box2.y) - Math.abs(b.y - box2.y))[0]?.text ?? "" : "";
+    // The holding period decides the term (§ 1222: more than one year is long-term). Some forms
+    // print a category or box 2 that contradicts their own dates (us-007's "abc stock", bought and
+    // sold in 2025, is marked "D"); the expected returns follow the dates, so the printed term is
+    // only a fallback when a date is missing or "VARIOUS".
+    const acquired = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(d.text("1b").trim());
+    const sold = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(d.text("1c").trim());
+    const byDates = acquired && sold
+      ? new Date(+sold[3], +sold[1] - 1, +sold[2]) > new Date(+acquired[3] + 1, +acquired[1] - 1, +acquired[2])
+      : undefined;
+    const long = byDates ?? (/^[DEF]$/.test(letter) || (!letter && /^Long-term/.test(term)));
+    if (/^Ordinary/.test(term)) extra.source_document_1099b_ordinary = leaf(true);
+    const code = { A: "basis_reported", D: "basis_reported", B: "basis_not_reported", E: "basis_not_reported", C: "not_received", F: "not_received" }[letter] ?? "";
+    const iso = (us: string) => { const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(us.trim()); return m ? `${m[3]}-${m[1]}-${m[2]}` : us.trim(); };
+    g.payer_name ??= leaf(d.raw.values.find((v) => v.x < 100 && v.y > 715)?.lines[0] ?? "");
+    Object.assign(s, {
+      desc_of_prop: leaf(d.text("1a")), acquired_dt: leaf(iso(d.text("1b"))), sold_disposed_dt: leaf(iso(d.text("1c"))),
+      proceeds: leaf(d.amount("1d")), cost_basis: leaf(d.amount("1e")),
+      accrued_market_discount: leaf(d.amount("1f")), wash_sale_loss: leaf(d.amount("1g")),
+      fed_inc_tax_wh: leaf(d.amount("4")),
+      input_irs8949_code: leaf(code), input_sale_term: leaf(long ? "long_term" : "short_term"),
+      ...d.unmodelled("b1099", ["1a", "1b", "1c", "1d", "1e", "1f", "1g", "2", "4", "12", "14", "15", "16"]),
+    });
+  });
+
   // State and local income tax the reader doesn't place: W-2 box 19 and 1099 state withholding
   // (1099-INT box 17, 1099-DIV box 16, 1099-NEC box 5). Schedule A line 5a needs them, so an
   // itemizing case with any is put out of scope (taxcalcbench.ts).
@@ -226,5 +283,6 @@ export function mergeSourceDocuments(inputDir: string, rd: Record<string, unknow
     ...byKind("1099nec").map((f) => new Doc(f, readPdf(f)).amount("5")),
   ].filter((n) => n > 0).reduce((a, n) => a + n, 0);
   if (otherStateLocal) extra.ty25_unplaced_state_local_income_tax = leaf(otherStateLocal);
+  if (ambiguousBoxes.length) extra.source_document_ambiguous_box = leaf([...new Set(ambiguousBoxes)].join(", "));
   Object.assign(rd, extra);
 }

@@ -1,7 +1,8 @@
 /**
  * Schedule A (itemized deductions), 2023–2025 layout. Only the lines the model
  * carries: medical (with the 7.5% floor), state and local taxes (with the SALT
- * cap), home mortgage interest and points, gifts to charity with the carryover
+ * cap), home mortgage interest and points, investment interest (Form 4952,
+ * line 9), gifts to charity with the carryover
  * (line 13), and gambling losses up to gambling winnings (line 16). Home
  * acquisition debt is assumed within the § 163(h)(3) limit.
  *
@@ -21,14 +22,14 @@ export interface ScheduleALines {
   line1: number; line2: number; line3: number; line4: number;
   line5a: number; salesTaxElected: boolean; line5b: number; line5c: number; line5d: number;
   saltCap: number; line5e: number; line7: number;
-  line8a: number; line8c: number; line8e: number; line10: number;
+  line8a: number; line8c: number; line8e: number; line9: number; line10: number;
   line11: number; line12: number; line13: number; line14: number; line16: number;
   line17: number;
   electToItemize: boolean;
   charityLimitMayApply: boolean;
 }
 
-export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinnings = 0): ScheduleALines {
+export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinnings = 0, investmentInterest = 0): ScheduleALines {
   const sum = (xs: number[]) => sumWith(R, xs);
   const it = t.itemized ?? {};
   const line1 = R(it.medicalExpenses ?? 0);
@@ -45,7 +46,8 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
   const line8a = R(it.mortgageInterest1098 ?? 0);
   const line8c = R(it.mortgagePoints ?? 0);
   const line8e = sum([line8a, line8c]);
-  const line10 = line8e;
+  const line9 = R(investmentInterest);   // Form 4952 line 8
+  const line10 = sum([line8e, line9]);
   const by = it.charityByLimit;
   const line11 = by ? sum([by.cash60 ?? 0, by.cash30 ?? 0]) : R(it.charityCash ?? 0);
   const line12 = by ? sum([by.nonCash50 ?? 0, by.nonCash30 ?? 0, by.capitalGain30 ?? 0, by.capitalGain20 ?? 0]) : R(it.charityNonCash ?? 0);
@@ -62,7 +64,7 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
   const line17 = sum([line4, line7, line10, line14, line16]);
   return {
     line1, line2, line3, line4, line5a, salesTaxElected: it.stateLocalTax?.kind === "sales", line5b, line5c, line5d,
-    saltCap: cap, line5e, line7, line8a, line8c, line8e, line10, line11, line12, line13, line14, line16, line17,
+    saltCap: cap, line5e, line7, line8a, line8c, line8e, line9, line10, line11, line12, line13, line14, line16, line17,
     electToItemize: !!it.electToItemize, charityLimitMayApply,
   };
 }
