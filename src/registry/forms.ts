@@ -637,6 +637,7 @@ export const FORM_REGISTRY: FormEntry[] = [
     "Fines, Penalties, and Other Amounts",
   ),
   irs("f1098t", "Form 1098-T", "information_return", "Tuition Statement"),
+  irs("f3921", "Form 3921", "information_return", "Exercise of an Incentive Stock Option Under Section 422(b)"),
 
   // ═══════════════════════════════════════════════════════════════════════════
   // H. RETIREMENT / BENEFITS / HEALTH COVERAGE

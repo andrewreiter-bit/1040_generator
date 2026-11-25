@@ -44,6 +44,7 @@ import { Form2441Lines, form2441 } from "./dependent-care";
 import { Form8863Lines, form8863 } from "./education";
 import { Form8962Lines, form8962 } from "./premium-tax-credit";
 import { IraDeductionLines, iraDeduction } from "./ira";
+import { Form6251Lines, form6251 } from "./amt";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -126,6 +127,11 @@ export interface ReturnLines {
   taxableIncome: number;       // 15
   tax: number;                 // 16
   scheduleTwoPartOne: number;  // 17 (Schedule 2 line 3: excess advance PTC repayment; no AMT)
+  /** Form 6251: always figured; attached (and AMT owed) when line 11 is more than zero. */
+  form6251: Form6251Lines;
+  /** Schedule 2 Part I: AMT (2023 line 1, 2024–2025 line 2) and the excess advance PTC repayment. */
+  alternativeMinimumTax: number;
+  excessAdvancePtc: number;
   /** Form 8962 (premium tax credit), when the household had Marketplace coverage. */
   form8962?: Form8962Lines;
   taxBeforeCredits: number;    // 18
@@ -382,7 +388,18 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   if (f8962 && scheduleCs.some((c) => (c.business.healthInsurancePremiums ?? 0) > 0)) {
     unsupported.push("Marketplace coverage with a self-employed health insurance deduction (Rev. Proc. 2014-41 iteration)");
   }
-  const scheduleTwoPartOne = f8962?.line29 ?? 0;
+  const excessAdvancePtc = f8962?.line29 ?? 0;
+  // Form 6251 line 2i: ISO spread on shares exercised and still held (a spouse's only on a joint return).
+  const isoAdjustment = sum((t.isoExercises ?? []).filter((x) => x.employee !== "spouse" || joint)
+    .map((x) => R(Math.max(0, x.fairMarketValue - x.exercisePrice) * x.shares)));
+  const f6251 = form6251(t, {
+    agi, totalDeductions, isoAdjustment, seniorDeduction: schedule1A?.line37 ?? 0, itemizes, scheduleALine7: schA?.line7 ?? 0,
+    standardDeduction: standardDeductionAmount, taxableIncome, qualifiedDividends, netCapitalGain,
+    regularTax: tax, excessAptc: excessAdvancePtc, R,
+  });
+  unsupported.push(...f6251.unsupported);
+  const alternativeMinimumTax = f6251.line11;
+  const scheduleTwoPartOne = round2(excessAdvancePtc + alternativeMinimumTax);
   const taxBeforeCredits = round2(tax + scheduleTwoPartOne);
 
   // ── Child tax credit / credit for other dependents (Schedule 8812 Part I) ──
@@ -484,7 +501,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     scheduleA: itemizes ? schA : undefined, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     // Form 8962 is filed only to claim the PTC or reconcile advance payments.
-    tax, scheduleTwoPartOne, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,
+    tax, scheduleTwoPartOne, form6251: f6251, alternativeMinimumTax, excessAdvancePtc, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
     earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit, americanOpportunityCredit,

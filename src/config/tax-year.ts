@@ -189,6 +189,17 @@ export const SOCIAL_SECURITY_TAXABILITY = {
 };
 
 /**
+ * Alternative minimum tax (Form 6251, each year's form and instructions): the exemption and
+ * where its 25% phase-out starts (single/HOH, joint/QSS, MFS), and where the 28% rate begins
+ * on the taxable excess (MFS half).
+ */
+export const AMT: Record<number, { exemption: { single: number; joint: number; mfs: number }; phaseoutStart: { single: number; joint: number; mfs: number }; bracket: number }> = {
+  2023: { exemption: { single: 81300, joint: 126500, mfs: 63250 }, phaseoutStart: { single: 578150, joint: 1156300, mfs: 578150 }, bracket: 220700 },
+  2024: { exemption: { single: 85700, joint: 133300, mfs: 66650 }, phaseoutStart: { single: 609350, joint: 1218700, mfs: 609350 }, bracket: 232600 },
+  2025: { exemption: { single: 88100, joint: 137000, mfs: 68500 }, phaseoutStart: { single: 626350, joint: 1252700, mfs: 626350 }, bracket: 239100 },
+};
+
+/**
  * Traditional IRA (IRA Deduction Worksheet, Schedule 1 line 20; Pub 590-A): the contribution
  * limit and age-50 catch-up, and where the deduction phase-out ends for someone covered by a
  * workplace plan — single/HOH (and MFS living apart), joint (and QSS), a joint filer who isn't

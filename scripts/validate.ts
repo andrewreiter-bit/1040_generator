@@ -34,12 +34,12 @@ import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
-import { IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
+import { AMT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
-  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "fw4",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
@@ -672,8 +672,52 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     if (!near(n0(p62("line29")), Math.min(excess, cap))) bad.push(`29 ${p62("line29")} vs min(excess, limit)`);
     checks.push({ phase: 2, id: "8962-lines-from-1095as", ok: !bad.length, detail: bad.join("; ") || undefined });
     tie(2, "8962-26-equals-sch3-9", n0(p62("line26")), n0(s3("line9")), "Form 8962 line 26 vs Schedule 3 line 9");
-    tie(2, "8962-29-equals-sch2-and-1040-17", n0(p62("line29")), n0(line("line17")), "Form 8962 line 29 vs 1040 line 17");
+    tie(2, "8962-29-plus-amt-equals-1040-17", round2(n0(p62("line29")) + r.alternativeMinimumTax), n0(line("line17")), "Form 8962 line 29 + AMT vs 1040 line 17");
     if (docs.f1040s2?.length) tie(2, "8962-29-equals-sch2-excess-aptc", n0(p62("line29")), n0(s2("excessAptc")), "Form 8962 line 29 vs Schedule 2 excess APTC line");
+  }
+  // ── Form 6251 (AMT), refigured from the filled 3921s, Schedule A and the 1040 ──────
+  const a62 = keyed(docs.f6251?.[0], "f6251");
+  if (docs.f6251?.length) {
+    const bad: string[] = [];
+    const y25 = t.taxYear >= 2025;
+    const spread = round2((docs.f3921 ?? []).map((run) => keyed(run, "f3921"))
+      .reduce((x, k) => x + Math.max(0, n0(k("CopyB.box4")) - n0(k("CopyB.box3"))) * n0(k("CopyB.box5")), 0));
+    if (!near(n0(a62("line2i")), spread)) bad.push(`2i ${a62("line2i")} vs Σ 3921 spread ${money(spread)}`);
+    const sa = keyed(docs.f1040sa?.[0], "f1040sa");
+    const want2a = docs.f1040sa?.length ? n0(sa("line7")) : n0(line("line12"));
+    if (!near(n0(a62("line2a")), want2a)) bad.push(`2a ${a62("line2a")} vs ${money(want2a)}`);
+    // Line 1 (2025: 1b) may be negative, printed in parentheses.
+    const raw1 = a62(y25 ? "line1b" : "line1") ?? "";
+    const line1 = raw1.startsWith("(") ? -n0(raw1.replace(/[()]/g, "")) : n0(raw1);
+    const l4 = round2(line1 + n0(a62("line2a")) + n0(a62("line2i")));
+    if (!near(n0(a62("line4")), l4)) bad.push(`4 vs 1 + 2a + 2i`);
+    const k = t.filingStatus === "MFJ" || t.filingStatus === "QSS" ? "joint" : t.filingStatus === "MFS" ? "mfs" : "single";
+    const ex = Math.max(0, AMT[t.taxYear].exemption[k] - Math.max(0, l4 - AMT[t.taxYear].phaseoutStart[k]) * 0.25);
+    if (!near(n0(a62("line5")), ex)) bad.push(`5 ${a62("line5")} vs ${money(ex)}`);
+    const l6 = Math.max(0, round2(l4 - ex));
+    if (!near(n0(a62("line6")), l6)) bad.push("6 vs 4 − 5");
+    const brk = AMT[t.taxYear].bracket / (t.filingStatus === "MFS" ? 2 : 1);
+    const rate = (v: number) => (v <= brk ? v * 0.26 : v * 0.28 - brk * 0.02);
+    const p = (l: number) => n0(a62(`line${l}`));
+    if (a62("line40")) {
+      const arith = [
+        near(p(16), Math.min(p(12), p(15))), near(p(17), round2(p(12) - p(16))), near(p(18), Math.round(rate(p(17)) * 100) / 100),
+        near(p(22), Math.min(p(12), p(13))), near(p(23), Math.min(p(21), p(22))), near(p(30), Math.min(p(24), p(29))),
+        near(p(31), Math.round(p(30) * 15) / 100), near(p(32), round2(p(23) + p(30))), near(p(34), Math.round(p(33) * 20) / 100),
+        near(p(38), round2(p(18) + p(31) + p(34))), near(p(39), Math.round(rate(p(12)) * 100) / 100), near(p(40), Math.min(p(38), p(39))),
+        near(p(7), p(40)),
+      ];
+      if (arith.some((ok) => !ok)) bad.push("Part III arithmetic");
+      // Inputs from the regular-tax worksheet, checked against the 1040 itself.
+      const qdcg5 = Math.max(0, round2(n0(line("line15")) - p(13)));
+      if (!near(p(20), qdcg5) || !near(p(27), qdcg5)) bad.push("Part III lines 20/27 vs 1040 line 15 − line 13");
+      if (p(13) > round2(n0(line("line3a")) + Math.max(0, n0(line("line7")))) + 0.01) bad.push("Part III line 13 over 1040 lines 3a + 7");
+    } else if (!near(p(7), Math.round(rate(l6) * 100) / 100)) bad.push("7 vs 26%/28%");
+    const l10 = round2(n0(line("line16")) + (docs.f1040s2?.length ? n0(s2("excessAptc")) : 0));
+    if (!near(p(10), l10)) bad.push("10 vs 1040 line 16 + Schedule 2 excess APTC");
+    if (!near(p(11), Math.max(0, round2(p(9) - p(10))))) bad.push("11 vs 9 − 10");
+    checks.push({ phase: 2, id: "6251-lines-from-3921s-and-1040", ok: !bad.length, detail: bad.join("; ") || undefined });
+    tie(2, "6251-11-equals-sch2-amt", p(11), n0(s2("amt")), "Form 6251 line 11 vs Schedule 2 AMT line");
   }
   if (docs.f1040s3?.length) tie(2, "sch3-8-equals-1040-20", n0(s3("line8")), n0(line("line20")), "Schedule 3 line 8 vs 1040 line 20");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
@@ -826,7 +870,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

@@ -24,6 +24,7 @@ import { getFieldMap } from "../fieldmaps";
 import { form8949Copies } from "../fieldmaps/capital";
 import { reportedSales } from "../fieldmaps/f1099b";
 import { students1098T } from "../fieldmaps/education";
+import { includedIsoExercises } from "../fieldmaps/amt";
 import { computeReturn } from "./compute";
 import { includedW2s } from "./household";
 
@@ -57,6 +58,8 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.form2441) out.push("f2441");
   if (r.form8863) out.push("f8863");
   if (r.form8962) out.push("f8962");
+  // Form 6251 is attached when line 7 is more than line 10 (i.e. AMT is owed; no AMT foreign tax credit).
+  if (r.form6251.line7 > r.form6251.line10) out.push("f6251");
   if (r.scheduleC.length) out.push("f1040sc");
   if (r.scheduleSE.some((s) => !s.belowMinimum)) out.push("f1040sse");
   if (r.form8995 && !r.form8995.overThreshold) out.push("f8995");
@@ -98,6 +101,15 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f8880":   return single(formId, t, "Form 8880");
     case "f2441":   return single(formId, t, "Form 2441");
     case "f8962":   return single(formId, t, "Form 8962");
+    case "f6251":   return single(formId, t, "Form 6251");
+    case "f3921": {
+      if (!getFieldMap("f3921", t.taxYear)) return [];
+      const xs = includedIsoExercises(t);
+      return xs.map((x, i) => ({
+        index: i + 1, count: xs.length, label: `3921 #${i + 1} (${x.corporation.name})`,
+        view: { ...t, document: { source: t, isoIndex: i } },
+      }));
+    }
     case "f1095a": {
       if (!getFieldMap("f1095a", t.taxYear)) return [];
       const ps = t.marketplace1095As ?? [];

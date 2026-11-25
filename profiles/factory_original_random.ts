@@ -13,6 +13,7 @@ import { addRetirementSavings, addTraditionalIra, buildRetirement1099Rs } from "
 import { buildDependentCare } from "./dependent-care";
 import { buildEducation } from "./education";
 import { buildMarketplace } from "./marketplace";
+import { buildIsoExercises } from "./iso";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -270,6 +271,9 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   if (marketplace) taxpayer.marketplace1095As = marketplace;
   // Traditional IRA contributions (Schedule 1 line 20; last draws).
   addTraditionalIra(faker, taxpayer, IRA_CONTRIBUTION_LIMIT[taxYear], IRA_CATCH_UP);
+  // Incentive stock option exercises (Form 3921 → AMT; last draws).
+  const isoExercises = buildIsoExercises(faker, taxpayer);
+  if (isoExercises) taxpayer.isoExercises = isoExercises;
   return taxpayer;
 }
 

@@ -340,6 +340,22 @@ export interface Marketplace1095A {
   annualAdvancePayments: number;   // C: advance payment of the PTC
 }
 
+/**
+ * Form 3921: exercise of an incentive stock option. The shares are held at year end, so
+ * there's no regular-tax income; the spread is an AMT adjustment (Form 6251 line 2i).
+ */
+export interface IsoExercise {
+  /** Omitted = primary taxpayer. A spouse's exercise appears only on MFJ returns. */
+  employee?: "primary" | "spouse";
+  corporation: { name: string; street: string; city: string; ein: string };
+  dateGranted: string;        // box 1, MM/DD/YYYY
+  dateExercised: string;      // box 2 (in the tax year)
+  exercisePrice: number;      // box 3, per share
+  fairMarketValue: number;    // box 4, per share on the exercise date
+  shares: number;             // box 5
+  account?: string;
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -360,6 +376,8 @@ export interface DocumentContext {
   retirementIndex?: number;
   /** Which education student (index into source.education.students): Form 1098-T, Form 8863 page 2. */
   educationIndex?: number;
+  /** Which ISO exercise (index into the included exercises): Form 3921. */
+  isoIndex?: number;
   /** Which Marketplace policy (index into source.marketplace1095As): Form 1095-A. */
   policyIndex?: number;
 }
@@ -420,6 +438,8 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Incentive stock option exercises (Forms 3921 → Form 6251 line 2i). */
+  isoExercises?: IsoExercise[];
   /** Health Insurance Marketplace coverage (Forms 1095-A → Form 8962). */
   marketplace1095As?: Marketplace1095A[];
   /** Education credits: students, institutions and expenses (Form 8863, Forms 1098-T). */
