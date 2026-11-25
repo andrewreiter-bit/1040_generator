@@ -15,7 +15,7 @@
     "fill": "ts-node scripts/fill.ts",
     "fill:batch": "ts-node scripts/fill.ts --count 5",
     "fill:merge": "ts-node scripts/fill.ts --merge",
-    "fill:common": "ts-node scripts/fill.ts --forms f1040,f1040s1,f1040s1a,f1040s2,f1040s3,f1040sa,f1040sb,f1040sc,f1040sd,f1040se,f1040sse,f8949,f8582,f2441,f8863,f8880,f8962,f8995,f8995a,f8995aa,f8995ac,f8959,f8960,f1040s8,f1040sei,fw2,f1099int,f1099div,f1099b,f1099r,f1098t,f1095a,fw4",
+    "fill:common": "ts-node scripts/fill.ts --forms f1040,f1040s1,f1040s1a,f1040s2,f1040s3,f1040sa,f1040sb,f1040sc,f1040sd,f1040se,f1040sse,f8949,f8582,f2441,f8863,f8880,f8962,f6251,f8995,f8995a,f8995aa,f8995ac,f8959,f8960,f1040s8,f1040sei,fw2,f1099int,f1099div,f1099b,f1099r,f1098t,f1095a,f3921,fw4",
 
     "validate": "ts-node scripts/validate.ts",
     "answer-key": "ts-node scripts/answer-key.ts",

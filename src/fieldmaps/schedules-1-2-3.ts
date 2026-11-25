@@ -84,18 +84,18 @@ function schedule1(taxYear: number): FieldMap {
 interface Schedule2Layout {
   /** Part I: the excess advance PTC repayment line (2023 line 2, 2024+ line 1a), the line 1
    * subtotal (2024+ line 1z, same amount), and line 3. */
-  excessAptc: string; partISubtotal?: string; line3: string;
+  excessAptc: string; partISubtotal?: string; amt: string; line3: string;
   line4: string; line4Boxes: string[];
   line7: string; line8: string; line8Box: string; line11: string; line12: string; line13: string; line18: string; line21: string;
 }
 
 const S2: Record<number, Schedule2Layout> = {
   // 2023: line 1 AMT, 2 excess APTC, 3 = 1 + 2.
-  2023: { excessAptc: "P1.f1_04", line3: "P1.f1_05", line4: "P1.f1_06", line4Boxes: [],
+  2023: { excessAptc: "P1.f1_04", amt: "P1.f1_03", line3: "P1.f1_05", line4: "P1.f1_06", line4Boxes: [],
     line7: "P1.f1_09", line8: "P1.f1_10", line8Box: "P1.Line8_ReadOrder[0].c1_1", line11: "P1.f1_13", line12: "P1.f1_14", line13: "P1.f1_15", line18: "P2.f2_22", line21: "P2.f2_25" },
-  2024: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", line3: "P1.f1_13", line4: "P1.f1_14", line4Boxes: [],
+  2024: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", amt: "P1.f1_12", line3: "P1.f1_13", line4: "P1.f1_14", line4Boxes: [],
     line7: "P1.f1_17", line8: "P1.f1_18", line8Box: "P1.Line8_ReadOrder[0].c1_3", line11: "P1.f1_21", line12: "P1.f1_22", line13: "P1.f1_23", line18: "P2.f2_22", line21: "P2.f2_25" },
-  2025: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", line3: "P1.f1_13", line4: "P1.f1_15",
+  2025: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", amt: "P1.f1_12", line3: "P1.f1_13", line4: "P1.f1_15",
     line4Boxes: ["P1.Line4_ReadOrder[0].c1_3", "P1.Line4_ReadOrder[0].c1_4", "P1.Line4_ReadOrder[0].c1_5"],
     line7: "P1.f1_18", line8: "P1.f1_19", line8Box: "P1.Line8_ReadOrder[0].c1_6", line11: "P1.f1_22", line12: "P1.f1_23", line13: "P1.f1_24", line18: "P2.f2_21", line21: "P2.f2_24" },
 };
@@ -106,8 +106,10 @@ function schedule2(taxYear: number): FieldMap {
   const { add, build } = mapBuilder("f1040s2", taxYear);
   add(F("P1.f1_01"), "names", names);
   add(F("P1.f1_02"), "ssn", ssn);
-  add(F(L.excessAptc), "excessAptc", (x) => moneyOrBlank(x.scheduleTwoPartOne));
-  if (L.partISubtotal) add(F(L.partISubtotal), "line1z", (x) => moneyOrBlank(x.scheduleTwoPartOne));
+  add(F(L.excessAptc), "excessAptc", (x) => moneyOrBlank(x.excessAdvancePtc));
+  if (L.partISubtotal) add(F(L.partISubtotal), "line1z", (x) => moneyOrBlank(x.excessAdvancePtc));
+  // AMT: Form 6251 line 11 (2023 line 1, 2024–2025 line 2).
+  add(F(L.amt), "amt", (x) => moneyOrBlank(x.alternativeMinimumTax));
   add(F(L.line3), "line3", (x) => moneyOrBlank(x.scheduleTwoPartOne));
   L.line4Boxes.forEach((f, i) => add(F(f), `line4.box${i + 1}`, () => OFF));
   add(F(L.line4), "line4", (x) => moneyOrBlank(x.schedule2.seTax));
