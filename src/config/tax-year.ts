@@ -167,13 +167,16 @@ export const MEDICAL_AGI_FLOOR = 0.075;
 /**
  * Schedule A line 5e SALT cap (§ 164(b)(6)). 2023–2024: $10,000. 2025 (OBBBA,
  * 2025 Schedule A instructions' worksheet): $40,000 less 30% of modified AGI over
- * $500,000, not below $10,000. Married filing separately: half of each amount.
+ * $500,000, not below $10,000. Married filing separately: the State and Local Tax Deduction
+ * Worksheet uses a $250,000 threshold (line 5) and halves line 9 (line 10), i.e. § 164(b)(7)(B)
+ * reduces the full applicable amount and § 164(b)(6)(B) halves it: $20,000 less 15% of the
+ * excess, not below $5,000.
  */
 export function saltCap(taxYear: number, status: FilingStatus, modifiedAgi: number): number {
   const half = status === "MFS" ? 0.5 : 1;
   if (taxYear < 2025) return 10000 * half;
   const over = Math.max(0, modifiedAgi - 500000 * half);
-  return Math.max(40000 * half - 0.3 * over, 10000 * half);
+  return Math.max(40000 - 0.3 * over, 10000) * half;
 }
 
 /**

@@ -1,9 +1,16 @@
 /**
  * Schedule A (itemized deductions), 2023–2025 layout. Only the lines the model
  * carries: medical (with the 7.5% floor), state and local taxes (with the SALT
- * cap), home mortgage interest and points, and gifts to charity. Home acquisition
- * debt is assumed within the § 163(h)(3) limit and charity within the AGI limits
- * (computeReturn flags gifts over 60% / 30% of AGI).
+ * cap), home mortgage interest and points, gifts to charity with the carryover
+ * (line 13), and gambling losses up to gambling winnings (line 16). Home
+ * acquisition debt is assumed within the § 163(h)(3) limit.
+ *
+ * Charity AGI limits (Pub 526): 60% cash to 50%-limit organizations, 50% other
+ * gifts to them, 30% to other organizations and capital gain property, 20%
+ * capital gain property to other organizations. Pub 526 Worksheet 2 isn't
+ * modelled, so `charityLimitMayApply` is set (and reported as unsupported) when
+ * a limit could bind: gifts plus carryover over 20% of AGI, unless they're all
+ * 60% cash within 60%.
  */
 import { FakeTaxpayer } from "../faker/taxpayer";
 import { MEDICAL_AGI_FLOOR, saltCap } from "../config/tax-year";
@@ -15,11 +22,13 @@ export interface ScheduleALines {
   line5a: number; salesTaxElected: boolean; line5b: number; line5c: number; line5d: number;
   saltCap: number; line5e: number; line7: number;
   line8a: number; line8c: number; line8e: number; line10: number;
-  line11: number; line12: number; line14: number;
+  line11: number; line12: number; line13: number; line14: number; line16: number;
   line17: number;
+  electToItemize: boolean;
+  charityLimitMayApply: boolean;
 }
 
-export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder): ScheduleALines {
+export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinnings = 0): ScheduleALines {
   const sum = (xs: number[]) => sumWith(R, xs);
   const it = t.itemized ?? {};
   const line1 = R(it.medicalExpenses ?? 0);
@@ -37,12 +46,23 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder): ScheduleALi
   const line8c = R(it.mortgagePoints ?? 0);
   const line8e = sum([line8a, line8c]);
   const line10 = line8e;
-  const line11 = R(it.charityCash ?? 0);
-  const line12 = R(it.charityNonCash ?? 0);
-  const line14 = sum([line11, line12]);
-  const line17 = sum([line4, line7, line10, line14]);
+  const by = it.charityByLimit;
+  const line11 = by ? sum([by.cash60 ?? 0, by.cash30 ?? 0]) : R(it.charityCash ?? 0);
+  const line12 = by ? sum([by.nonCash50 ?? 0, by.nonCash30 ?? 0, by.capitalGain30 ?? 0, by.capitalGain20 ?? 0]) : R(it.charityNonCash ?? 0);
+  const line13 = R(it.charityCarryover ?? 0);
+  const line14 = sum([line11, line12, line13]);
+  let charityLimitMayApply: boolean;
+  if (by) {
+    const onlyCash60 = line13 === 0 && line14 === R(by.cash60 ?? 0);
+    charityLimitMayApply = line14 > agi * 0.2 && !(onlyCash60 && line14 <= agi * 0.6);
+  } else {
+    charityLimitMayApply = line11 > agi * 0.6 || line12 > agi * 0.3 || (line13 > 0 && line14 > agi * 0.2);
+  }
+  const line16 = Math.min(R(it.gamblingLosses ?? 0), R(gamblingWinnings));
+  const line17 = sum([line4, line7, line10, line14, line16]);
   return {
     line1, line2, line3, line4, line5a, salesTaxElected: it.stateLocalTax?.kind === "sales", line5b, line5c, line5d,
-    saltCap: cap, line5e, line7, line8a, line8c, line8e, line10, line11, line12, line14, line17,
+    saltCap: cap, line5e, line7, line8a, line8c, line8e, line10, line11, line12, line13, line14, line16, line17,
+    electToItemize: !!it.electToItemize, charityLimitMayApply,
   };
 }

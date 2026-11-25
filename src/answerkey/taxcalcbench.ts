@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, ItemizedDeductions, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { isQualifyingChild } from "../tax/household";
 import { mergeSourceDocuments } from "./ty25-documents";
@@ -162,6 +162,12 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
   { form: "IRS1040ScheduleD", element: "NetLTCapitalGainOrLossAmt", label: "Sch D 15", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line15] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTAndLTCapitalGainOrLossAmt", label: "Sch D 16", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line16] : []) },
+  { form: "IRS1040ScheduleA", element: "StateAndLocalTaxAmt", label: "Sch A 5a", pick: (r) => (r.scheduleA ? [r.scheduleA.line5a] : []) },
+  { form: "IRS1040ScheduleA", element: "StateAndLocalTaxLimitationAmt", label: "Sch A 5e", pick: (r) => (r.scheduleA ? [r.scheduleA.line5e] : []) },
+  { form: "IRS1040ScheduleA", element: "GiftsByCashOrCheckAmt", label: "Sch A 11", pick: (r) => (r.scheduleA ? [r.scheduleA.line11] : []) },
+  { form: "IRS1040ScheduleA", element: "OtherThanByCashOrCheckAmt", label: "Sch A 12", pick: (r) => (r.scheduleA ? [r.scheduleA.line12] : []) },
+  { form: "IRS1040ScheduleA", element: "CarryoverFromPriorYearAmt", label: "Sch A 13", pick: (r) => (r.scheduleA ? [r.scheduleA.line13] : []) },
+  { form: "IRS1040ScheduleA", element: "TotalItemizedDeductionsAmt", label: "Sch A 17", pick: (r) => (r.itemizes && r.scheduleA ? [r.scheduleA.line17] : []) },
   { form: "IRS1040", element: "TaxableInterestAmt", label: "1040 2b", pick: (r) => [r.taxableInterest] },
   { form: "IRS1040", element: "SocSecBnftAmt", label: "1040 6a", pick: (r) => [r.socialSecurity.line1] },
   { form: "IRS1040", element: "TaxableSocSecAmt", label: "1040 6b", pick: (r) => [r.socialSecurity.taxable] },
@@ -252,6 +258,14 @@ const SUPPORTED_PATHS: RegExp[] = [
   // TY25 HSAs (Form 8889): contributions, coverage on December 1, and coverage months when it changed.
   /^hsa\.hsa(ContribCurYr|LastMonthRuleStatus|StatusChangeDurYr)(TP|SP)$/,
   /^hsa_addtl\.hsaMonthsCover(Self|Family)(TP|SP)$/,
+  // TY25 Schedule A. deduction_type is the preparer's note of the result; the override decides.
+  /^deduction_type$/, /^deduction_override$/, /^mfs_deduction$/,  // values checked in toTaxpayer
+  /^ty25_unplaced_state_local_income_tax$/,                         // checked when itemizing
+  /^scha_tax\.(stateTaxOrSalesTax|salesTaxesPaid|taxRE|taxPP)$/,
+  /^scha_gft\.(cash60|cash30|nonCash50|nonCash30|contrib30CapGain)(CO)?$/, /^scha_gft\.noncash50CO$/,
+  /^med_exp\.(medExpDrDentist|medExpPrescYesSCHA)(TP|SP)$/,
+  // Married filing separately: living apart / legal separation (checked against the computed return).
+  /^basic3\.(legallySeparated|livedApartFromSpouse|livedWithSpouse6Mos)$/,
   // TY25 Forms W-2G (read from the PDFs; see ty25-documents.ts).
   /^wg2\[\]\.(nonStandard|w2g_(who_applies_to|payer|winnings|fed_wh))$/,
   /^irs1099_r\[\]\.(gross_distribution_amt_input|taxable_amt_input|txbl_amount_not_determined_ind_input|total_distribution_ind_input|federal_income_tax_withheld_amt_input|employee_contributions_amt_input|f1099_r_distribution_cd_input|irasepsimple_ind_input)$/,
@@ -657,6 +671,54 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     payerName: String(val(g, "w2g_payer") ?? ""), payerTin: "",
     winnings: num(val(g, "w2g_winnings")), federalWithheld: num(val(g, "w2g_fed_wh")),
   }));
+  // TY25 Schedule A. "maximize_deduction" takes the larger of standard and itemized (us-004 notes
+  // "standard" yet its expected return itemizes the larger amount); "force_itemized" elects to
+  // itemize a smaller amount (line 18).
+  const override = val(rd, "deduction_override");
+  if (override !== undefined && override !== "maximize_deduction" && override !== "force_itemized") outOfScope.add(`deduction_override=${override}`);
+  const mfsDeduction = val(rd, "mfs_deduction");
+  if (mfsDeduction !== undefined && !["spouse_did_not_file", "spouse_itemized", "spouse_standard"].includes(String(mfsDeduction))) outOfScope.add(`mfs_deduction=${mfsDeduction}`);
+  const tax = rd.scha_tax, gft = rd.scha_gft, med = rd.med_exp, oth = rd.scha_oth;
+  let itemized: ItemizedDeductions | undefined;
+  if (override !== undefined || tax || gft || med || oth) {
+    const choice = val(tax, "stateTaxOrSalesTax");
+    if (choice !== undefined && choice !== "L" && choice !== "G") outOfScope.add(`scha_tax.stateTaxOrSalesTax=${choice}`);
+    // Line 16: only gambling losses are modelled.
+    let gamblingLosses = 0;
+    for (let i = 1; i <= 9; i++) {
+      const type = val(oth, `miscNot2Type${i}`), amt = num(val(oth, `miscNot2Amt${i}`));
+      if (type === undefined && !amt) continue;
+      if (/^gambling losses$/i.test(String(type ?? ""))) gamblingLosses += amt;
+      else outOfScope.add(`Schedule A line 16 "${type}"`);
+    }
+    const carry = ["cash60CO", "cash30CO", "nonCash30CO", "noncash50CO", "contrib30CapGainCO"].reduce((a, k) => a + num(val(gft, k)), 0);
+    itemized = {
+      medicalExpenses: ["medExpDrDentistTP", "medExpDrDentistSP", "medExpPrescYesSCHATP", "medExpPrescYesSCHASP"].reduce((a, k) => a + num(val(med, k)), 0) || undefined,
+      // "L": state and local income taxes (W-2 box 17, the engine's default); "G": general sales taxes.
+      stateLocalTax: choice === "G" ? { kind: "sales", amount: num(val(tax, "salesTaxesPaid")) } : undefined,
+      realEstateTax: num(val(tax, "taxRE")) || undefined,
+      personalPropertyTax: num(val(tax, "taxPP")) || undefined,
+      charityByLimit: {
+        cash60: num(val(gft, "cash60")), cash30: num(val(gft, "cash30")), nonCash50: num(val(gft, "nonCash50")),
+        nonCash30: num(val(gft, "nonCash30")), capitalGain30: num(val(gft, "contrib30CapGain")),
+      },
+      charityCarryover: carry || undefined,
+      gamblingLosses: gamblingLosses || undefined,
+      electToItemize: override === "force_itemized" || undefined,
+    };
+  }
+  // Local income tax and 1099 state withholding belong on line 5a but aren't read into it.
+  const unplacedTax = num(val(rd, "ty25_unplaced_state_local_income_tax"));
+  if (itemized && unplacedTax && itemized.stateLocalTax?.kind !== "sales") {
+    postChecks.push((r) => (r.itemizes ? `Schedule A line 5a missing $${unplacedTax} of local income tax or 1099 state withholding` : undefined));
+  }
+  // Living apart / legal separation changes only the Social Security base amount, the IRA
+  // phase-out range and EIC for a separated spouse; none of those may apply.
+  if (["legallySeparated", "livedApartFromSpouse"].some((k) => val(rd.basic3, k) === true)) {
+    postChecks.push((r) => r.socialSecurity.line1 > 0 || r.schedule1.iraDeduction > 0 || r.earnedIncomeCredit > 0 || dependents.length
+      ? "married filing separately while separated or living apart, with Social Security, an IRA deduction, EIC or dependents"
+      : undefined);
+  }
   for (const k of ["tp_dependent", "sp_dependent", "eic_not_allowed", "qualifying_child_of_another"]) {
     if (val(f1040, k) === true) outOfScope.add(`irs1040.${k}`);
   }
@@ -724,8 +786,10 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     capitalGains: null,
     socialSecurityBenefits: null,
     estimatedTaxPayments: estimated,
-    takesStandardDeduction: true,
+    takesStandardDeduction: !itemized,
     itemizedDeductionTotal: null,
+    itemized,
+    spouseItemizes: status === "MFS" && mfsDeduction === "spouse_itemized" || undefined,
     preparerPtin: null,
   };
 
