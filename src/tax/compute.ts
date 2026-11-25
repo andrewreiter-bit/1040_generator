@@ -352,15 +352,19 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const youBlind = !!t.blind;
   const spouseBlind = t.filingStatus === "MFJ" && !!t.spouseBlind;
   const boxes = [youAre65, youBlind, spouseIs65, spouseBlind].filter(Boolean).length;
-  const standardDeductionAmount = standardDeduction(t.taxYear, t.filingStatus) + boxes * additionalStandardDeduction(t.taxYear, t.filingStatus);
-  const schA = t.itemized ? scheduleA(t, agi, R) : undefined;
+  // A separate filer whose spouse itemizes has no standard deduction (§ 63(c)(6)(A)).
+  const spouseItemizes = t.filingStatus === "MFS" && !!t.spouseItemizes;
+  const standardDeductionAmount = spouseItemizes ? 0
+    : standardDeduction(t.taxYear, t.filingStatus) + boxes * additionalStandardDeduction(t.taxYear, t.filingStatus);
+  const schA = t.itemized ? scheduleA(t, agi, R, gamblingWinnings) : undefined;
   const legacyItemized = !t.itemized && !t.takesStandardDeduction && t.itemizedDeductionTotal != null ? round2(t.itemizedDeductionTotal) : undefined;
   const itemizedAmount = schA?.line17 ?? legacyItemized ?? 0;
-  const itemizes = itemizedAmount > standardDeductionAmount;
+  // The larger of the two, or Schedule A when the filer elects to itemize (line 18) or must.
+  const itemizes = itemizedAmount > standardDeductionAmount || (!!schA && (schA.electToItemize || spouseItemizes));
   const deduction = itemizes ? itemizedAmount : standardDeductionAmount;
   if (itemizes && legacyItemized != null) unsupported.push("itemized deductions given only as a total (no Schedule A detail)");
-  if (itemizes && schA && (schA.line11 > agi * 0.6 || schA.line12 > agi * 0.3)) {
-    unsupported.push("charitable contributions over the AGI limits (§ 170(b))");
+  if (itemizes && schA?.charityLimitMayApply) {
+    unsupported.push("charitable contributions that may exceed an AGI limit (§ 170(b); Pub 526 Worksheet 2)");
   }
   // 2025 Schedule 1-A Part V: enhanced deduction for seniors (married couples must file jointly).
   let schedule1A: ReturnLines["schedule1A"];

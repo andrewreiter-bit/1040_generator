@@ -216,5 +216,15 @@ export function mergeSourceDocuments(inputDir: string, rd: Record<string, unknow
       });
     }
   }
+  // State and local income tax the reader doesn't place: W-2 box 19 and 1099 state withholding
+  // (1099-INT box 17, 1099-DIV box 16, 1099-NEC box 5). Schedule A line 5a needs them, so an
+  // itemizing case with any is put out of scope (taxcalcbench.ts).
+  const otherStateLocal = [
+    ...byKind("w2").map((f) => new Doc(f, readPdf(f)).amount("19")),
+    ...byKind("1099int").map((f) => new Doc(f, readPdf(f)).amount("17")),
+    ...byKind("1099div").map((f) => new Doc(f, readPdf(f)).amount("16")),
+    ...byKind("1099nec").map((f) => new Doc(f, readPdf(f)).amount("5")),
+  ].filter((n) => n > 0).reduce((a, n) => a + n, 0);
+  if (otherStateLocal) extra.ty25_unplaced_state_local_income_tax = leaf(otherStateLocal);
   Object.assign(rd, extra);
 }

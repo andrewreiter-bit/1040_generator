@@ -69,7 +69,10 @@ function scheduleA(taxYear: number): FieldMap {
     "10": (r) => moneyOrBlank(a(r)?.line10),
     "11": (r) => moneyOrBlank(a(r)?.line11),
     "12": (r) => moneyOrBlank(a(r)?.line12),
+    "13": (r) => moneyOrBlank(a(r)?.line13),
     "14": (r) => moneyOrBlank(a(r)?.line14),
+    "16.type1": (r) => (a(r)?.line16 ? "Gambling losses" : BLANK),
+    "16": (r) => moneyOrBlank(a(r)?.line16),
     "17": (r) => (a(r) ? money(a(r)!.line17) : BLANK),
   };
   add(`${P1}f1_1[0]`, "names", (_r, t) => namesOnReturn(t));
@@ -79,7 +82,7 @@ function scheduleA(taxYear: number): FieldMap {
   }
   add(`${P1}c1_1[0]`, "line5a.salesTax", (r) => checkIf(!!a(r)?.salesTaxElected));
   add(`${P1}Line8_ReadOrder[0].c1_2[0]`, "line8.notAllForHome", () => OFF);
-  add(`${P1}Line18_ReadOrder[0].c1_3[0]`, "line18.electToItemize", () => OFF);
+  add(`${P1}Line18_ReadOrder[0].c1_3[0]`, "line18.electToItemize", (r) => checkIf(!!a(r)?.electToItemize && r.itemizes && (a(r)?.line17 ?? 0) < r.standardDeductionAmount));
   return build();
 }
 

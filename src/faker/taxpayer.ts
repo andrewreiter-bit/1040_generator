@@ -178,6 +178,17 @@ export interface ItemizedDeductions {
   charityCash?: number;              // 11
   /** 12. Kept at $500 or less (no Form 8283). */
   charityNonCash?: number;
+  /**
+   * Lines 11–12 by Pub 526 limit category (percent of AGI). When present, charityCash and
+   * charityNonCash are ignored: line 11 = cash60 + cash30, line 12 = the rest.
+   */
+  charityByLimit?: { cash60?: number; cash30?: number; nonCash50?: number; nonCash30?: number; capitalGain30?: number; capitalGain20?: number };
+  /** 13. Carryover from prior years (assumed within its 5 years). */
+  charityCarryover?: number;
+  /** 16. Gambling losses, deductible up to the gambling winnings on Schedule 1 line 8b. */
+  gamblingLosses?: number;
+  /** 18. Itemize even when smaller than the standard deduction. */
+  electToItemize?: boolean;
 }
 
 /** One rental real estate property (Schedule E Part I column). */
@@ -505,6 +516,8 @@ export interface FakeTaxpayer {
   /** Legally blind at year end (additional standard deduction). */
   blind?: boolean;
   spouseBlind?: boolean;
+  /** Married filing separately and the spouse itemizes: the standard deduction is $0 (§ 63(c)(6)(A)). */
+  spouseItemizes?: boolean;
   /** Schedule A detail. When present, `itemizedDeductionTotal` is ignored. */
   itemized?: ItemizedDeductions;
   /** Schedule E Part I rentals. When present, `rentalIncome` is ignored. */
