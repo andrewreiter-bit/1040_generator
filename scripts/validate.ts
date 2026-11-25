@@ -34,7 +34,7 @@ import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
-import { PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
+import { IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
@@ -444,6 +444,34 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "sch1-10-equals-1040-8", n0(s1("line10")), n0(line("line8")), "Schedule 1 line 10 vs 1040 line 8");
     tie(2, "sch1-26-equals-1040-10", n0(s1("line26")), n0(line("line10")), "Schedule 1 line 26 vs 1040 line 10");
     tie(2, "sch1-3-equals-schC-total", n0(s1("line3")), r.schedule1.businessIncome, "Schedule 1 line 3 vs Σ Sch C 31");
+    // Line 20: the IRA Deduction Worksheet, refigured from the contributions and the filled W-2s' box 13.
+    const ira = t.traditionalIraContributions;
+    if (ira && (ira.primary || ira.spouse)) {
+      const joint = t.filingStatus === "MFJ";
+      const w2Docs = (docs.fw2 ?? []).map((run, i) => ({ k: keyed(run, "fw2"), w: includedW2s(t)[i] }));
+      const covered = (who: string) => w2Docs.some((d) => (d.w?.employee ?? "primary") === who && d.k("CopyB.box13.retirementPlan") === "Yes");
+      const anyCovered = covered("primary") || (joint && covered("spouse"));
+      const age = (dob: string | null) => t.taxYear - Number((dob ?? "").split("/")[2]);
+      const ends = IRA_PHASEOUT_END[t.taxYear];
+      const line5 = round2(n0(line("line9")) - n0(s1("line11")) - n0(s1("line15")) - n0(s1("line17")) - n0(s1("line18")));
+      const comp = round2(includedW2s(t).filter((w) => joint || (w.employee ?? "primary") === "primary").reduce((x, w) => x + w.wages, 0)
+        + r.scheduleSE.filter((x) => joint || x.owner === "primary").reduce((x, se) => x + se.combined - se.deduction, 0));
+      const per = (who: "primary" | "spouse", dob: string | null) => {
+        const contrib = ira[who] ?? 0;
+        if (!contrib || (who === "spouse" && !joint)) return 0;
+        const limit = IRA_CONTRIBUTION_LIMIT[t.taxYear] + (age(dob) >= 50 ? IRA_CATCH_UP : 0);
+        let l7 = limit;
+        if (anyCovered) {
+          const end = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false ? ends.mfsTogether : joint ? (covered(who) ? ends.joint : ends.spouseCovered) : ends.single;
+          const width = joint && covered(who) ? 20000 : 10000;
+          const room = round2(end - line5);
+          l7 = room <= 0 ? 0 : room >= width ? limit : Math.max(200, Math.ceil((room * limit) / width / 10) * 10);
+        }
+        return Math.min(l7, comp, contrib);
+      };
+      const want = round2(per("primary", t.dateOfBirth) + per("spouse", t.spouseDateOfBirth));
+      tie(2, "sch1-20-ira-deduction", n0(s1("line20")), want, "Schedule 1 line 20 vs IRA Deduction Worksheet");
+    }
     // Line 8g: the household's Alaska Permanent Fund dividends (a spouse's only on a joint return).
     const pfd = (t.alaskaPermanentFundDividends?.primary ?? 0) + (t.filingStatus === "MFJ" ? t.alaskaPermanentFundDividends?.spouse ?? 0 : 0);
     tie(2, "sch1-8g-equals-alaska-pfd", n0(s1("line8g")), pfd, "Schedule 1 line 8g vs household PFD");

@@ -321,6 +321,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       stateWithheld: num(val(st, "state_income_tax")),
       stateCode: String(val(st, "state") ?? ""),
       employee: val(w, "who_applies_to") === "spouse" ? "spouse" : "primary",
+      retirementPlan: val(w, "retirement_plan") === true,
       box12: list(w, "employers_use_grp")
         .map((e) => ({ code: String(val(e, "box_12_code") ?? ""), amount: num(val(e, "box_12_amount")) }))
         .filter((e) => UNCOLLECTED_BOX12.has(e.code) || RETIREMENT_BOX12.has(e.code)),

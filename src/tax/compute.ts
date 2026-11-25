@@ -43,6 +43,7 @@ import { Form8880Lines, form8880 } from "./savers-credit";
 import { Form2441Lines, form2441 } from "./dependent-care";
 import { Form8863Lines, form8863 } from "./education";
 import { Form8962Lines, form8962 } from "./premium-tax-credit";
+import { IraDeductionLines, iraDeduction } from "./ira";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -57,6 +58,8 @@ export interface Schedule1Lines {
   seTaxDeduction: number;      // 15
   healthInsurance: number;     // 17
   earlyWithdrawalPenalty: number; // 18 (1099-INT box 2)
+  iraDeduction: number;        // 20
+  iraWorksheet?: IraDeductionLines;
   studentLoanInterest: number; // 21
   adjustments: number;         // 26 → 1040 line 10
   required: boolean;
@@ -286,30 +289,35 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   }
   const rentalIncome = schE?.line26 ?? 0;
   const additionalIncome = round2(businessIncome + rentalIncome + unemployment + otherIncome);
-  // Lines 6a/6b: the worksheet uses every other income line and the adjustments other
-  // than student loan interest (whose own worksheet uses line 9, so it comes after).
-  const socialSecurity = socialSecurityWorksheet(
-    t,
-    round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome),
-    sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]),
-    R,
-  );
-  const totalIncome = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + socialSecurity.taxable + capitalGain + additionalIncome);
+  // Lines 6a/6b: the worksheet uses every other income line and the adjustments other than
+  // student loan interest (whose own worksheet uses line 9, so it comes after). The IRA
+  // deduction is one of those adjustments, but its own worksheet needs line 9: figure line 9
+  // without it first, then the deduction, then the Social Security worksheet again with it.
+  // (Only exact when nobody is covered by a workplace plan or there are no benefits; the
+  // other case is Pub 590-A Appendix B and is reported as unsupported.)
+  const otherIncome9 = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome);
+  const otherAdjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]);
+  const ss0 = socialSecurityWorksheet(t, otherIncome9, otherAdjustments, R);
+  const ira = iraDeduction(t, w2s, scheduleSEs, round2(otherIncome9 + ss0.taxable), otherAdjustments, ss0.line1 > 0, R);
+  if (ira) unsupported.push(...ira.unsupported);
+  const iraDeductionAmount = ira?.deduction ?? 0;
+  const socialSecurity = iraDeductionAmount ? socialSecurityWorksheet(t, otherIncome9, round2(otherAdjustments + iraDeductionAmount), R) : ss0;
+  const totalIncome = round2(otherIncome9 + socialSecurity.taxable);
 
   // Student Loan Interest Deduction Worksheet (not allowed on MFS).
   let studentLoanInterest = 0;
   if ((t.studentLoanInterestPaid ?? 0) > 0 && t.filingStatus !== "MFS") {
     const w1 = Math.min(t.studentLoanInterestPaid!, STUDENT_LOAN_INTEREST.max);
-    const w4 = round2(totalIncome - (educatorExpenses + seTaxDeduction + healthInsurance + earlyWithdrawalPenalty));
+    const w4 = round2(totalIncome - (otherAdjustments + iraDeductionAmount));
     const start = joint ? c.studentLoanPhaseoutStart.joint : c.studentLoanPhaseoutStart.other;
     const range = joint ? STUDENT_LOAN_INTEREST.phaseoutRange.joint : STUDENT_LOAN_INTEREST.phaseoutRange.other;
     const w6 = Math.min(1, Math.round((Math.max(0, w4 - start) / range) * 1000) / 1000);
     studentLoanInterest = round2(w1 - round2(w1 * w6));
   }
-  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, studentLoanInterest]);
+  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, iraDeductionAmount, studentLoanInterest]);
   const schedule1: Schedule1Lines = {
     businessIncome, rentalIncome, unemployment, unemploymentRepaid, alaskaPfd, otherIncome, additionalIncome, educatorExpenses, seTaxDeduction,
-    healthInsurance, earlyWithdrawalPenalty, studentLoanInterest, adjustments,
+    healthInsurance, earlyWithdrawalPenalty, iraDeduction: iraDeductionAmount, iraWorksheet: ira, studentLoanInterest, adjustments,
     required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0 || !!schE,
   };
 

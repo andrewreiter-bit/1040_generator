@@ -36,17 +36,17 @@ interface Schedule1Layout {
   line3: string; line5: string; line7: string; line8g: string; line9: string; line10: string;
   /** 2025 only: "repaid" checkbox and amount beside line 7. */
   repaidBox?: string; repaidAmount?: string;
-  line11: string; line15: string; line17: string; line18: string; line21: string; line25: string; line26: string;
+  line11: string; line15: string; line17: string; line18: string; line20: string; line21: string; line25: string; line26: string;
 }
 
 const S1: Record<number, Schedule1Layout> = {
   2023: { root: "form1[0]", line3: "P1.f1_06", line5: "P1.f1_08", line7: "P1.f1_10", line8g: "P1.f1_17", line9: "P1.f1_35", line10: "P1.f1_36",
-    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
+    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
   2024: { root: "form1[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_11", line8g: "P1.f1_18", line9: "P1.f1_37", line10: "P1.f1_38",
-    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
+    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
   2025: { root: "topmostSubform[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_12", line8g: "P1.f1_19", line9: "P1.f1_37", line10: "P1.f1_38",
     repaidBox: "P1.Line7_ReadOrder[0].c1_3", repaidAmount: "P1.Line7_ReadOrder[0].f1_11",
-    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line21: "P2.f2_13", line25: "P2.f2_29", line26: "P2.f2_30" },
+    line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_29", line26: "P2.f2_30" },
 };
 
 /** "P1.f1_07" → "<root>.Page1[0].f1_07[0]". */
@@ -74,6 +74,7 @@ function schedule1(taxYear: number): FieldMap {
   add(F(L.line15), "line15", (x) => moneyOrBlank(x.schedule1.seTaxDeduction));
   add(F(L.line17), "line17", (x) => moneyOrBlank(x.schedule1.healthInsurance));
   add(F(L.line18), "line18", (x) => moneyOrBlank(x.schedule1.earlyWithdrawalPenalty));
+  add(F(L.line20), "line20", (x) => moneyOrBlank(x.schedule1.iraDeduction));
   add(F(L.line21), "line21", (x) => moneyOrBlank(x.schedule1.studentLoanInterest));
   add(F(L.line25), "line25", () => BLANK);
   add(F(L.line26), "line26", (x) => money(x.schedule1.adjustments));
