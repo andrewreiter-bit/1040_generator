@@ -23,6 +23,7 @@ import { FakeTaxpayer } from "../faker/taxpayer";
 import { getFieldMap } from "../fieldmaps";
 import { form8949Copies } from "../fieldmaps/capital";
 import { reportedSales } from "../fieldmaps/f1099b";
+import { students1098T } from "../fieldmaps/education";
 import { computeReturn } from "./compute";
 import { includedW2s } from "./household";
 
@@ -54,6 +55,7 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.schedule3.required) out.push("f1040s3");
   if (r.form8880) out.push("f8880");
   if (r.form2441) out.push("f2441");
+  if (r.form8863) out.push("f8863");
   if (r.scheduleC.length) out.push("f1040sc");
   if (r.scheduleSE.some((s) => !s.belowMinimum)) out.push("f1040sse");
   if (r.form8995 && !r.form8995.overThreshold) out.push("f8995");
@@ -94,6 +96,23 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f8582":   return single(formId, t, "Form 8582");
     case "f8880":   return single(formId, t, "Form 8880");
     case "f2441":   return single(formId, t, "Form 2441");
+    case "f8863": {
+      // One Form 8863 per student (page 1 is filled on the first only).
+      const f = computeReturn(t).form8863;
+      if (!f || !getFieldMap("f8863", t.taxYear)) return [];
+      return f.students.map((s, i) => ({
+        index: i + 1, count: f.students.length, label: `Form 8863 #${i + 1} (student ${s.index + 1}${s.aotc ? ", AOTC" : ", LLC"})`,
+        view: { ...t, document: { source: t, educationIndex: s.index } },
+      }));
+    }
+    case "f1098t": {
+      if (!getFieldMap("f1098t", t.taxYear)) return [];
+      const idx = students1098T(t);
+      return idx.map((e, i) => ({
+        index: i + 1, count: idx.length, label: `1098-T #${i + 1} (${t.education!.students[e].institution.name})`,
+        view: { ...t, document: { source: t, educationIndex: e } },
+      }));
+    }
     case "f1099b": {
       if (!getFieldMap("f1099b", t.taxYear)) return [];
       const sales = reportedSales(t);

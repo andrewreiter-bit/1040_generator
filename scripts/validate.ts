@@ -38,8 +38,8 @@ import { saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8880", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
-  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "fw4",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
@@ -254,7 +254,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
     ["15", "line15", r.taxableIncome], ["16", "line16", r.tax], ["18", "line18", r.taxBeforeCredits],
     ["19", "line19", r.childAndOtherDependentCredit], ["20", "line20", r.scheduleThreeCredits], ["22", "line22", r.taxAfterCredits], ["23", "line23", r.otherTaxes],
     ["24", "line24", r.totalTax], ["25b", "line25b", r.form1099Withholding], ["25c", "line25c", r.otherWithholding], ["25d", "line25d", r.totalWithholding],
-    ["27", "line27", r.earnedIncomeCredit], ["28", "line28", r.additionalChildTaxCredit],
+    ["27", "line27", r.earnedIncomeCredit], ["28", "line28", r.additionalChildTaxCredit], ["29", "line29", r.americanOpportunityCredit],
     ["31", "line31", r.scheduleThreePayments], ["32", "line32", r.refundableCredits], ["33", "line33", r.totalPayments],
     ["34", "line34", r.overpaid], ["35a", "line35a", r.refund], ["37", "line37", r.amountOwed],
   ];
@@ -526,8 +526,8 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     if (!near(l8, n0(line("line11")))) bad.push(`8 ${l8} vs 1040 line 11`);
     if (rate !== saversCreditRate(t.taxYear, t.filingStatus, l8)) bad.push(`9 ${rate} vs table`);
     if (!near(l10, Math.round(l7 * rate * 100) / 100) && !near(l10, Math.round(l7 * rate))) bad.push(`10 ${l10} vs 7 × 9`);
-    const after2441 = Math.max(0, round2(n0(line("line18")) - n0(s3("line2"))));
-    if (!near(l11, after2441)) bad.push(`11 ${l11} vs 1040 line 18 − Schedule 3 line 2`);
+    const after2441 = Math.max(0, round2(n0(line("line18")) - n0(s3("line2")) - n0(s3("line3"))));
+    if (!near(l11, after2441)) bad.push(`11 ${l11} vs 1040 line 18 − Schedule 3 lines 2–3`);
     if (!near(l12, Math.min(l10, l11))) bad.push(`12 ${l12} vs min(10, 11)`);
     checks.push({ phase: 2, id: "8880-lines-from-w2s-and-1099rs", ok: !bad.length, detail: bad.join("; ") || undefined });
     tie(2, "8880-12-equals-sch3-4", l12, n0(s3("line4")), "Form 8880 line 12 vs Schedule 3 line 4");
@@ -560,6 +560,54 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     if (!near(n0(m41("line11")), Math.min(n0(m41("line9c")), n0(m41("line10"))))) bad.push("11 vs min(9c, 10)");
     checks.push({ phase: 2, id: "2441-lines-from-household", ok: !bad.length, detail: bad.join("; ") || undefined });
     tie(2, "2441-11-equals-sch3-2", n0(m41("line11")), n0(s3("line2")), "Form 2441 line 11 vs Schedule 3 line 2");
+  }
+  // ── Form 8863 (education credits), recomputed from the filled 1098-Ts ──────────────
+  const e63 = (docs.f8863 ?? []).map((run) => keyed(run, "f8863"));
+  if (e63.length) {
+    const ed = t.education!;
+    const bad: string[] = [];
+    const t1098 = (docs.f1098t ?? []).map((run) => keyed(run, "f1098t"));
+    // Each student's adjusted expenses: 1098-T box 1 − box 5, plus course materials for the AOTC.
+    const perStudent = r.form8863!.students.map((row) => {
+      const s = ed.students[row.index];
+      const k = t1098.find((d) => digits(d("CopyB.studentTin") ?? "") === digits(row.index >= 0 ? (s.student === "primary" ? t.ssn : s.student === "spouse" ? t.spouseSSN ?? "" : t.dependents[s.student]?.ssn ?? "") : ""));
+      const box1 = k ? n0(k("CopyB.box1")) : s.tuitionPaid, box5 = k ? n0(k("CopyB.box5")) : s.scholarships;
+      const aotc = s.aotcPriorYears < 4 && s.halfTime && !s.completedFirst4Years && !s.felonyDrugConviction;
+      return { aotc, adjusted: round2(Math.max(0, box1 - box5) + (aotc ? s.courseMaterials ?? 0 : 0)) };
+    });
+    e63.forEach((k, i) => {
+      const p = perStudent[i];
+      if (p.aotc) {
+        const l27 = Math.min(p.adjusted, 4000), l28 = Math.max(0, round2(l27 - 2000));
+        const l30 = l28 === 0 ? l27 : round2(2000 + Math.round(l28 * 0.25 * 100) / 100);
+        if (!near(n0(k("line27")), l27) || !near(n0(k("line30")), l30)) bad.push(`student ${i + 1} lines 27/30`);
+      } else if (!near(n0(k("line31")), p.adjusted)) bad.push(`student ${i + 1} line 31`);
+    });
+    const p1 = e63[0];
+    const joint = t.filingStatus === "MFJ";
+    const room = (joint ? 180000 : 90000) - n0(line("line11"));
+    const factor = room <= 0 ? 0 : room >= (joint ? 20000 : 10000) ? 1 : Math.round((room / (joint ? 20000 : 10000)) * 1000) / 1000;
+    const sum30 = round2(perStudent.reduce((x, q) => x + (q.aotc ? Math.min(q.adjusted, 4000) : 0), 0) === 0 ? 0 : e63.reduce((x, k) => x + n0(k("line30")), 0));
+    const sum31 = round2(e63.reduce((x, k) => x + n0(k("line31")), 0));
+    if (!near(n0(p1("line1")), sum30)) bad.push(`1 ${p1("line1")} vs Σ line 30`);
+    if (!near(n0(p1("line3")), n0(line("line11")))) bad.push("3 vs 1040 line 11");
+    const l6 = Number(`${p1("line6.whole") || 0}.${p1("line6.decimal") || "000"}`);
+    if (Math.abs(l6 - factor) > 0.0005) bad.push(`6 ${l6} vs ${factor}`);
+    const l7 = n0(p1("line7"));
+    if (!near(l7, Math.round(sum30 * factor * 100) / 100) && !near(l7, Math.round(sum30 * factor))) bad.push("7 vs 1 × 6");
+    const l8 = n0(p1("line8"));
+    const want8 = ed.aotcNonrefundableOnly ? 0 : l7 * 0.4;
+    if (!near(l8, Math.round(want8 * 100) / 100) && !near(l8, Math.round(want8))) bad.push("8 vs 40% of 7");
+    if (!near(n0(p1("line10")), sum31)) bad.push("10 vs Σ line 31");
+    const l12 = Math.min(sum31, 10000) * 0.2;
+    const l18 = n0(p1("line18"));
+    if (!near(l18, Math.round(l12 * factor * 100) / 100) && !near(l18, Math.round(l12 * factor))) bad.push("18 vs 12 × 17");
+    const ws = Math.max(0, round2(n0(line("line18")) - n0(s3("line2"))));
+    if (!near(n0(p1("line19")), Math.min(round2(l18 + n0(p1("line9"))), ws))) bad.push("19 vs Credit Limit Worksheet");
+    checks.push({ phase: 2, id: "8863-lines-from-1098ts", ok: !bad.length, detail: bad.join("; ") || undefined });
+    tie(2, "8863-8-equals-1040-29", l8, n0(line("line29")), "Form 8863 line 8 vs 1040 line 29");
+    tie(2, "8863-19-equals-sch3-3", n0(p1("line19")), n0(s3("line3")), "Form 8863 line 19 vs Schedule 3 line 3");
+    checks.push({ phase: 2, id: "8863-one-per-student", ok: e63.length === ed.students.length || e63.length === r.form8863!.students.length, detail: `${e63.length} Form 8863(s), ${ed.students.length} student(s)` });
   }
   if (docs.f1040s3?.length) tie(2, "sch3-8-equals-1040-20", n0(s3("line8")), n0(line("line20")), "Schedule 3 line 8 vs 1040 line 20");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
@@ -698,7 +746,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   if (docs.f1040s8?.length) {
     tie(2, "sch8812-14-equals-1040-19", n0(s8("line14")), n0(line("line19")), "Schedule 8812 line 14 vs 1040 line 19");
     // Credit Limit Worksheet A: line 18 less Schedule 3 line 4 (the only Schedule 3 credit modelled).
-    if (s8("line13")) tie(2, "sch8812-13-is-18-less-sch3-2-4", n0(s8("line13")), Math.max(0, round2(n0(line("line18")) - n0(s3("line2")) - n0(s3("line4")))), "Schedule 8812 line 13 vs 1040 line 18 − Schedule 3 lines 2 and 4");
+    if (s8("line13")) tie(2, "sch8812-13-is-18-less-sch3-2-4", n0(s8("line13")), Math.max(0, round2(n0(line("line18")) - n0(s3("line2")) - n0(s3("line3")) - n0(s3("line4")))), "Schedule 8812 line 13 vs 1040 line 18 − Schedule 3 lines 2, 3 and 4");
     tie(2, "sch8812-27-equals-1040-28", n0(s8("line27")), n0(line("line28")), "Schedule 8812 line 27 vs 1040 line 28");
   }
   const sei = keyed(docs.f1040sei?.[0], "f1040sei");
@@ -712,7 +760,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8880", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

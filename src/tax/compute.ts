@@ -41,6 +41,7 @@ import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security"
 import { RetirementLines, retirementDistributions } from "./retirement";
 import { Form8880Lines, form8880 } from "./savers-credit";
 import { Form2441Lines, form2441 } from "./dependent-care";
+import { Form8863Lines, form8863 } from "./education";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -74,6 +75,7 @@ export interface Schedule2Lines {
 
 export interface Schedule3Lines {
   dependentCareCredit: number;  // 2 (Form 2441 line 11)
+  educationCredit: number;      // 3 (Form 8863 line 19)
   saversCredit: number;         // 4 (Form 8880 line 12)
   nonrefundableCredits: number; // 8 → 1040 line 20
   excessSocialSecurity: number; // 11
@@ -122,6 +124,8 @@ export interface ReturnLines {
   taxBeforeCredits: number;    // 18
   childAndOtherDependentCredit: number; // 19
   scheduleThreeCredits: number;          // 20
+  /** Form 8863 (education credits), when the return claims one. */
+  form8863?: Form8863Lines;
   /** Form 2441 (child and dependent care credit), when the return claims it. */
   form2441?: Form2441Lines;
   /** Form 8880 (Saver's credit), when the return claims it. */
@@ -138,7 +142,9 @@ export interface ReturnLines {
   earnedIncomeCredit: number;  // 27 (2025: 27a)
   additionalChildTaxCredit: number; // 28
   scheduleThreePayments: number; // 31
-  refundableCredits: number;   // 32 (27 + 28 + 29 + 31; AOTC not modelled)
+  /** 29: refundable American opportunity credit (Form 8863 line 8). */
+  americanOpportunityCredit: number;
+  refundableCredits: number;   // 32 (27 + 28 + 29 + 31)
   totalPayments: number;       // 33
   overpaid: number;            // 34
   refund: number;              // 35a
@@ -367,17 +373,20 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const threshold = t.filingStatus === "MFJ" ? CTC_PHASEOUT_THRESHOLD.joint : CTC_PHASEOUT_THRESHOLD.other;
   const reduction = agi > threshold ? Math.ceil((agi - threshold) / 1000) * 50 : 0;
   const creditAfterPhaseout = Math.max(0, maxCredit - reduction);
-  // Credit order: Form 2441 (Schedule 3 line 2) is limited by line 18; Form 8880 (line 4) by
-  // line 18 less Schedule 3 lines 1–3; Schedule 8812 Credit Limit Worksheet A then takes both
-  // off line 18 before the child tax credit.
+  // Credit order: Form 2441 (Schedule 3 line 2) is limited by line 18; Form 8863 (line 3) by
+  // line 18 less line 2; Form 8880 (line 4) by line 18 less lines 1–3; Schedule 8812 Credit
+  // Limit Worksheet A then takes lines 2, 3 and 4 off line 18 before the child tax credit.
   const f2441 = form2441(t, w2s, scheduleSEs, agi, taxBeforeCredits, R);
   if (f2441) unsupported.push(...f2441.unsupported);
   const dependentCareCredit = f2441?.line11 ?? 0;
-  const f8880 = form8880(t, w2s, retirement.records, agi, Math.max(0, round2(taxBeforeCredits - dependentCareCredit)), R);
+  const f8863 = t.filingStatus === "MFS" ? undefined : form8863(t, agi, taxBeforeCredits, dependentCareCredit, R);
+  const educationCredit = f8863?.line19 ?? 0;
+  const americanOpportunityCredit = f8863?.line8 ?? 0;
+  const f8880 = form8880(t, w2s, retirement.records, agi, Math.max(0, round2(taxBeforeCredits - dependentCareCredit - educationCredit)), R);
   const saversCredit = f8880.line12;
-  const ctcTaxLimit = Math.max(0, round2(taxBeforeCredits - dependentCareCredit - saversCredit));
+  const ctcTaxLimit = Math.max(0, round2(taxBeforeCredits - dependentCareCredit - educationCredit - saversCredit));
   const childAndOtherDependentCredit = Math.min(creditAfterPhaseout, ctcTaxLimit);
-  const scheduleThreeCredits = round2(dependentCareCredit + saversCredit);
+  const scheduleThreeCredits = round2(dependentCareCredit + educationCredit + saversCredit);
   const totalCredits = round2(childAndOtherDependentCredit + scheduleThreeCredits);
   const taxAfterCredits = Math.max(0, round2(taxBeforeCredits - totalCredits));
 
@@ -411,7 +420,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
   const excessSs = excessSocialSecurity(t, w2s, R).total;
   const schedule3: Schedule3Lines = {
-    dependentCareCredit, saversCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs, otherPayments: excessSs,
+    dependentCareCredit, educationCredit, saversCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs, otherPayments: excessSs,
     required: excessSs > 0 || scheduleThreeCredits > 0,
   };
   const scheduleThreePayments = schedule3.otherPayments;
@@ -443,7 +452,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     taxLimit: ctcTaxLimit, credit: childAndOtherDependentCredit, partII,
     required: maxCredit > 0,
   };
-  const refundableCredits = round2(eic.credit + partII.credit + scheduleThreePayments);
+  const refundableCredits = round2(eic.credit + partII.credit + americanOpportunityCredit + scheduleThreePayments);
   const totalPayments = round2(totalWithholding + estimatedPayments + refundableCredits);
 
   const overpaid = Math.max(0, round2(totalPayments - totalTax));
@@ -457,7 +466,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
-    earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit,
+    earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit, americanOpportunityCredit,
+    form8863: f8863?.required ? f8863 : undefined,
     scheduleThreePayments, refundableCredits, totalPayments, overpaid, refund: overpaid, amountOwed,
     scheduleC: scheduleCs, scheduleSE: scheduleSEs, businessDeductions: bizDed,
     schedule1, schedule2, schedule3, form8959: f8959, form8960: f8960, form8995: qbi, form8995A: f8995a,
