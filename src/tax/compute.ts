@@ -45,6 +45,7 @@ import { Form8863Lines, form8863 } from "./education";
 import { Form8962Lines, form8962 } from "./premium-tax-credit";
 import { IraDeductionLines, iraDeduction } from "./ira";
 import { Form6251Lines, form6251 } from "./amt";
+import { HsaLines, form8889 } from "./hsa";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -53,7 +54,12 @@ export interface Schedule1Lines {
   unemploymentRepaid: number;  // repayment shown beside line 7
   /** 8g: Alaska Permanent Fund dividends (not NII, not earned or EIC investment income). */
   alaskaPfd: number;
-  otherIncome: number;         // 9 (lines 8a–8z; only 8g is modelled)
+  /** 8b: gambling winnings (Forms W-2G box 1); losses (Schedule A line 16) aren't modelled. */
+  gamblingWinnings: number;
+  hsaDistributions: number;    // 8f (taxable HSA distributions, Form 8889 line 16)
+  hsaDeduction: number;        // 13 (Form 8889 line 13)
+  hsa?: HsaLines;
+  otherIncome: number;         // 9 (lines 8a–8z; 8b, 8f and 8g are modelled)
   additionalIncome: number;    // 10 → 1040 line 8
   educatorExpenses: number;    // 11
   seTaxDeduction: number;      // 15
@@ -72,6 +78,8 @@ export interface Schedule2Lines {
   earlyDistributionTax: number;
   /** 13: uncollected Social Security / Medicare tax from W-2 box 12 codes A, B, M and N. */
   uncollectedTax: number;
+  /** 17c: additional 20% tax on HSA distributions (Form 8889 line 17b); also line 18. */
+  hsaAdditionalTax: number;
   additionalMedicareTax: number; // 11
   niit: number;                // 12
   otherTaxes: number;          // 21 → 1040 line 23
@@ -269,7 +277,14 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const unemploymentRepaid = sum(g1099s.map((g) => g.repaidThisYear));
   const unemployment = round2(sum(g1099s.map((g) => g.compensation)) - unemploymentRepaid);
   const alaskaPfd = sum([t.alaskaPermanentFundDividends?.primary ?? 0, joint ? t.alaskaPermanentFundDividends?.spouse ?? 0 : 0]);
-  const otherIncome = alaskaPfd;
+  // HSAs (Form 8889): taxable distributions are other income (8f), the deduction an adjustment (13).
+  const hsa = form8889(t, w2s, R);
+  if (hsa) unsupported.push(...hsa.unsupported);
+  const hsaDistributions = hsa?.taxableDistributions ?? 0;
+  const hsaDeduction = hsa?.deduction ?? 0;
+  const w2gs = (t.gamblingWinnings ?? []).filter((g) => g.recipient !== "spouse" || joint);
+  const gamblingWinnings = sum(w2gs.map((g) => g.winnings));
+  const otherIncome = round2(gamblingWinnings + alaskaPfd + hsaDistributions);
   const educatorExpenses = sum([
     Math.min(t.educatorExpenses?.primary ?? 0, EDUCATOR_EXPENSE_LIMIT),
     joint ? Math.min(t.educatorExpenses?.spouse ?? 0, EDUCATOR_EXPENSE_LIMIT) : 0,
@@ -288,7 +303,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     const netPassive = sum(nets);
     const modifiedAgi = round2(
       wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + businessIncome + unemployment + otherIncome + Math.max(0, netPassive)
-      - (educatorExpenses + healthInsurance + earlyWithdrawalPenalty),
+      - (educatorExpenses + hsaDeduction + healthInsurance + earlyWithdrawalPenalty),
     );
     f8582 = form8582(t, nets, modifiedAgi, R);
     schE = scheduleE(t.rentals!, R, f8582.activities.map((a) => a.allowed));
@@ -302,7 +317,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // (Only exact when nobody is covered by a workplace plan or there are no benefits; the
   // other case is Pub 590-A Appendix B and is reported as unsupported.)
   const otherIncome9 = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome);
-  const otherAdjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]);
+  const otherAdjustments = sum([educatorExpenses, hsaDeduction, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]);
   const ss0 = socialSecurityWorksheet(t, otherIncome9, otherAdjustments, R);
   const ira = iraDeduction(t, w2s, scheduleSEs, round2(otherIncome9 + ss0.taxable), otherAdjustments, ss0.line1 > 0, R);
   if (ira) unsupported.push(...ira.unsupported);
@@ -320,9 +335,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     const w6 = Math.min(1, Math.round((Math.max(0, w4 - start) / range) * 1000) / 1000);
     studentLoanInterest = round2(w1 - round2(w1 * w6));
   }
-  const adjustments = sum([educatorExpenses, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, iraDeductionAmount, studentLoanInterest]);
+  const adjustments = sum([educatorExpenses, hsaDeduction, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty, iraDeductionAmount, studentLoanInterest]);
   const schedule1: Schedule1Lines = {
-    businessIncome, rentalIncome, unemployment, unemploymentRepaid, alaskaPfd, otherIncome, additionalIncome, educatorExpenses, seTaxDeduction,
+    businessIncome, rentalIncome, unemployment, unemploymentRepaid, alaskaPfd, gamblingWinnings, hsaDistributions, hsaDeduction, hsa, otherIncome, additionalIncome, educatorExpenses, seTaxDeduction,
     healthInsurance, earlyWithdrawalPenalty, iraDeduction: iraDeductionAmount, iraWorksheet: ira, studentLoanInterest, adjustments,
     required: additionalIncome !== 0 || adjustments !== 0 || scheduleCs.length > 0 || g1099s.length > 0 || !!schE,
   };
@@ -433,9 +448,10 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const earlyDistributionTax = retirement.additionalTax;
   // Line 13 (Schedule 2 instructions): "box 12 of Form W-2 with codes A and B or M and N".
   const uncollectedTax = sum(w2s.flatMap((w) => (w.box12 ?? []).filter((e) => UNCOLLECTED_TAX_CODES.has(e.code)).map((e) => e.amount)));
-  const otherTaxes = round2(seTax + earlyDistributionTax + f8959.totalTax + f8960.tax + uncollectedTax);
+  const hsaAdditionalTax = hsa?.additionalTax ?? 0;
+  const otherTaxes = round2(seTax + earlyDistributionTax + f8959.totalTax + f8960.tax + uncollectedTax + hsaAdditionalTax);
   const schedule2: Schedule2Lines = {
-    seTax, earlyDistributionTax, uncollectedTax, additionalMedicareTax: f8959.totalTax, niit: f8960.tax, otherTaxes,
+    seTax, earlyDistributionTax, uncollectedTax, hsaAdditionalTax, additionalMedicareTax: f8959.totalTax, niit: f8960.tax, otherTaxes,
     required: otherTaxes > 0 || scheduleTwoPartOne > 0,
   };
   const totalTax = round2(taxAfterCredits + otherTaxes);
@@ -451,7 +467,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     socialSecurity.federalWithheld,
     retirement.federalWithheld,
   ]);
-  const otherWithholding = f8959.additionalWithheld;
+  // Line 25c: Form 8959 Additional Medicare Tax withheld and Forms W-2G box 4.
+  const w2gWithheld = sum((t.gamblingWinnings ?? []).filter((g) => g.recipient !== "spouse" || joint).map((g) => g.federalWithheld));
+  const otherWithholding = round2(f8959.additionalWithheld + w2gWithheld);
   const totalWithholding = round2(w2Withholding + form1099Withholding + otherWithholding);
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
   const excessSs = excessSocialSecurity(t, w2s, R).total;

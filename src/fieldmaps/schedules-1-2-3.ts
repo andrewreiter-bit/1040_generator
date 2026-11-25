@@ -33,18 +33,18 @@ const ssn: Value = (_r, t) => t.ssn;
 
 interface Schedule1Layout {
   root: string;
-  line3: string; line5: string; line7: string; line8g: string; line9: string; line10: string;
+  line3: string; line5: string; line7: string; line8b: string; line8f: string; line8g: string; line9: string; line10: string; line13: string;
   /** 2025 only: "repaid" checkbox and amount beside line 7. */
   repaidBox?: string; repaidAmount?: string;
   line11: string; line15: string; line17: string; line18: string; line20: string; line21: string; line25: string; line26: string;
 }
 
 const S1: Record<number, Schedule1Layout> = {
-  2023: { root: "form1[0]", line3: "P1.f1_06", line5: "P1.f1_08", line7: "P1.f1_10", line8g: "P1.f1_17", line9: "P1.f1_35", line10: "P1.f1_36",
+  2023: { root: "form1[0]", line3: "P1.f1_06", line5: "P1.f1_08", line7: "P1.f1_10", line8b: "P1.f1_12", line8f: "P1.f1_16", line8g: "P1.f1_17", line13: "P2.f2_03", line9: "P1.f1_35", line10: "P1.f1_36",
     line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
-  2024: { root: "form1[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_11", line8g: "P1.f1_18", line9: "P1.f1_37", line10: "P1.f1_38",
+  2024: { root: "form1[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_11", line8b: "P1.f1_13", line8f: "P1.f1_17", line8g: "P1.f1_18", line13: "P2.f2_03", line9: "P1.f1_37", line10: "P1.f1_38",
     line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_30", line26: "P2.f2_31" },
-  2025: { root: "topmostSubform[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_12", line8g: "P1.f1_19", line9: "P1.f1_37", line10: "P1.f1_38",
+  2025: { root: "topmostSubform[0]", line3: "P1.f1_07", line5: "P1.f1_09", line7: "P1.f1_12", line8b: "P1.f1_14", line8f: "P1.f1_18", line8g: "P1.f1_19", line13: "P2.f2_03", line9: "P1.f1_37", line10: "P1.f1_38",
     repaidBox: "P1.Line7_ReadOrder[0].c1_3", repaidAmount: "P1.Line7_ReadOrder[0].f1_11",
     line11: "P2.f2_01", line15: "P2.f2_05", line17: "P2.f2_07", line18: "P2.f2_08", line20: "P2.f2_12", line21: "P2.f2_13", line25: "P2.f2_29", line26: "P2.f2_30" },
 };
@@ -67,10 +67,13 @@ function schedule1(taxYear: number): FieldMap {
   }
   // 2023/2024 have no repaid box: line 7 is simply the net amount.
   add(F(L.line7), "line7", (x) => moneyOrBlank(x.schedule1.unemployment));
+  add(F(L.line8b), "line8b", (x) => moneyOrBlank(x.schedule1.gamblingWinnings));
+  add(F(L.line8f), "line8f", (x) => moneyOrBlank(x.schedule1.hsaDistributions));
   add(F(L.line8g), "line8g", (x) => moneyOrBlank(x.schedule1.alaskaPfd));
   add(F(L.line9), "line9", (x) => moneyOrBlank(x.schedule1.otherIncome));
   add(F(L.line10), "line10", (x) => money(x.schedule1.additionalIncome));
   add(F(L.line11), "line11", (x) => moneyOrBlank(x.schedule1.educatorExpenses));
+  add(F(L.line13), "line13", (x) => moneyOrBlank(x.schedule1.hsaDeduction));
   add(F(L.line15), "line15", (x) => moneyOrBlank(x.schedule1.seTaxDeduction));
   add(F(L.line17), "line17", (x) => moneyOrBlank(x.schedule1.healthInsurance));
   add(F(L.line18), "line18", (x) => moneyOrBlank(x.schedule1.earlyWithdrawalPenalty));
@@ -86,18 +89,18 @@ interface Schedule2Layout {
    * subtotal (2024+ line 1z, same amount), and line 3. */
   excessAptc: string; partISubtotal?: string; amt: string; line3: string;
   line4: string; line4Boxes: string[];
-  line7: string; line8: string; line8Box: string; line11: string; line12: string; line13: string; line18: string; line21: string;
+  line7: string; line8: string; line8Box: string; line11: string; line12: string; line13: string; line17c: string; line18: string; line21: string;
 }
 
 const S2: Record<number, Schedule2Layout> = {
   // 2023: line 1 AMT, 2 excess APTC, 3 = 1 + 2.
   2023: { excessAptc: "P1.f1_04", amt: "P1.f1_03", line3: "P1.f1_05", line4: "P1.f1_06", line4Boxes: [],
-    line7: "P1.f1_09", line8: "P1.f1_10", line8Box: "P1.Line8_ReadOrder[0].c1_1", line11: "P1.f1_13", line12: "P1.f1_14", line13: "P1.f1_15", line18: "P2.f2_22", line21: "P2.f2_25" },
+    line7: "P1.f1_09", line8: "P1.f1_10", line8Box: "P1.Line8_ReadOrder[0].c1_1", line11: "P1.f1_13", line12: "P1.f1_14", line13: "P1.f1_15", line17c: "P2.f2_04", line18: "P2.f2_22", line21: "P2.f2_25" },
   2024: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", amt: "P1.f1_12", line3: "P1.f1_13", line4: "P1.f1_14", line4Boxes: [],
-    line7: "P1.f1_17", line8: "P1.f1_18", line8Box: "P1.Line8_ReadOrder[0].c1_3", line11: "P1.f1_21", line12: "P1.f1_22", line13: "P1.f1_23", line18: "P2.f2_22", line21: "P2.f2_25" },
+    line7: "P1.f1_17", line8: "P1.f1_18", line8Box: "P1.Line8_ReadOrder[0].c1_3", line11: "P1.f1_21", line12: "P1.f1_22", line13: "P1.f1_23", line17c: "P2.f2_04", line18: "P2.f2_22", line21: "P2.f2_25" },
   2025: { excessAptc: "P1.Line1a_ReadOrder[0].f1_03", partISubtotal: "P1.f1_11", amt: "P1.f1_12", line3: "P1.f1_13", line4: "P1.f1_15",
     line4Boxes: ["P1.Line4_ReadOrder[0].c1_3", "P1.Line4_ReadOrder[0].c1_4", "P1.Line4_ReadOrder[0].c1_5"],
-    line7: "P1.f1_18", line8: "P1.f1_19", line8Box: "P1.Line8_ReadOrder[0].c1_6", line11: "P1.f1_22", line12: "P1.f1_23", line13: "P1.f1_24", line18: "P2.f2_21", line21: "P2.f2_24" },
+    line7: "P1.f1_18", line8: "P1.f1_19", line8Box: "P1.Line8_ReadOrder[0].c1_6", line11: "P1.f1_22", line12: "P1.f1_23", line13: "P1.f1_24", line17c: "P2.f2_04", line18: "P2.f2_21", line21: "P2.f2_24" },
 };
 
 function schedule2(taxYear: number): FieldMap {
@@ -120,7 +123,9 @@ function schedule2(taxYear: number): FieldMap {
   add(F(L.line11), "line11", (x) => moneyOrBlank(x.schedule2.additionalMedicareTax));
   add(F(L.line12), "line12", (x) => moneyOrBlank(x.schedule2.niit));
   add(F(L.line13), "line13", (x) => moneyOrBlank(x.schedule2.uncollectedTax));
-  add(F(L.line18), "line18", () => BLANK);
+  // Line 17c (HSA additional tax) is the only modelled line 17 item, so line 18 equals it.
+  add(F(L.line17c), "line17c", (x) => moneyOrBlank(x.schedule2.hsaAdditionalTax));
+  add(F(L.line18), "line18", (x) => moneyOrBlank(x.schedule2.hsaAdditionalTax));
   add(F(L.line21), "line21", (x) => money(x.schedule2.otherTaxes));
   return build();
 }

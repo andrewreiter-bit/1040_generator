@@ -34,12 +34,12 @@ import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
-import { AMT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
+import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
-  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "fw4",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "f1099sa", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
 
@@ -453,7 +453,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
       const anyCovered = covered("primary") || (joint && covered("spouse"));
       const age = (dob: string | null) => t.taxYear - Number((dob ?? "").split("/")[2]);
       const ends = IRA_PHASEOUT_END[t.taxYear];
-      const line5 = round2(n0(line("line9")) - n0(s1("line11")) - n0(s1("line15")) - n0(s1("line17")) - n0(s1("line18")));
+      const line5 = round2(n0(line("line9")) - n0(s1("line11")) - n0(s1("line13")) - n0(s1("line15")) - n0(s1("line17")) - n0(s1("line18")));
       const comp = round2(includedW2s(t).filter((w) => joint || (w.employee ?? "primary") === "primary").reduce((x, w) => x + w.wages, 0)
         + r.scheduleSE.filter((x) => joint || x.owner === "primary").reduce((x, se) => x + se.combined - se.deduction, 0));
       const per = (who: "primary" | "spouse", dob: string | null) => {
@@ -475,7 +475,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     // Line 8g: the household's Alaska Permanent Fund dividends (a spouse's only on a joint return).
     const pfd = (t.alaskaPermanentFundDividends?.primary ?? 0) + (t.filingStatus === "MFJ" ? t.alaskaPermanentFundDividends?.spouse ?? 0 : 0);
     tie(2, "sch1-8g-equals-alaska-pfd", n0(s1("line8g")), pfd, "Schedule 1 line 8g vs household PFD");
-    tie(2, "sch1-9-equals-8a-8z", n0(s1("line9")), n0(s1("line8g")), "Schedule 1 line 9 vs line 8g (only 8g modelled)");
+    tie(2, "sch1-9-equals-8a-8z", n0(s1("line9")), round2(n0(s1("line8b")) + n0(s1("line8f")) + n0(s1("line8g"))), "Schedule 1 line 9 vs lines 8b + 8f + 8g (the modelled line 8 items)");
   }
   const s1a = keyed(docs.f1040s1a?.[0], "f1040s1a");
   if (docs.f1040s1a?.length) tie(2, "sch1A-38-equals-1040-13b", n0(s1a("line38")), n0(line("line13b")), "Schedule 1-A line 38 vs 1040 line 13b");
@@ -719,12 +719,47 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 2, id: "6251-lines-from-3921s-and-1040", ok: !bad.length, detail: bad.join("; ") || undefined });
     tie(2, "6251-11-equals-sch2-amt", p(11), n0(s2("amt")), "Form 6251 line 11 vs Schedule 2 AMT line");
   }
+  // ── Form 8889 (HSA), refigured from the W-2s' code W, the 1099-SAs and the year's limits ──
+  if (docs.f8889?.length) {
+    const bad: string[] = [];
+    const w2Docs = (docs.fw2 ?? []).map((run, i) => ({ k: keyed(run, "fw2"), w: includedW2s(t)[i] }));
+    const sa = (docs.f1099sa ?? []).map((run) => keyed(run, "f1099sa"));
+    let sum13 = 0, sum16 = 0, sum17 = 0;
+    for (const run of docs.f8889) {
+      const k = keyed(run, "f8889");
+      const who = run.view.document?.hsaPerson ?? "primary";
+      const ssn = digits(who === "spouse" ? t.spouseSSN ?? "" : t.ssn);
+      const codeW = round2(w2Docs.filter((d) => (d.w?.employee ?? "primary") === who)
+        .flatMap((d) => ["a", "b", "c", "d"].map((x) => ({ code: d.k(`CopyB.box12${x}.code`), amount: n0(d.k(`CopyB.box12${x}.amount`)) })))
+        .filter((e) => e.code === "W").reduce((x, e) => x + e.amount, 0));
+      if (!near(n0(k("line9")), codeW)) bad.push(`${who} 9 vs W-2 code W ${money(codeW)}`);
+      const family = k("line1.family") === "Yes";
+      const ageEnd = t.taxYear - Number(((who === "spouse" ? t.spouseDateOfBirth : t.dateOfBirth) ?? "").split("/")[2]);
+      const married = t.filingStatus === "MFJ" || t.filingStatus === "MFS";
+      const l3 = HSA_LIMIT[t.taxYear][family ? "family" : "self"] + (ageEnd >= 55 && !(married && family) ? HSA_CATCH_UP : 0);
+      if (!near(n0(k("line3")), l3)) bad.push(`${who} 3 vs ${l3}`);
+      const l12 = Math.max(0, round2(n0(k("line8")) - n0(k("line11"))));
+      if (!near(n0(k("line12")), l12) || !near(n0(k("line13")), Math.min(n0(k("line2")), l12))) bad.push(`${who} 12/13`);
+      const dist = sa.find((d) => digits(d("CopyB.recipientTin") ?? "") === ssn);
+      const gross = dist ? n0(dist("CopyB.box1")) : 0;
+      if (!near(n0(k("line14a")), gross)) bad.push(`${who} 14a vs 1099-SA box 1`);
+      const l16 = Math.max(0, round2(n0(k("line14c")) - n0(k("line15"))));
+      if (!near(n0(k("line16")), l16)) bad.push(`${who} 16`);
+      const want17 = l16 > 0 && ageEnd < 65 ? Math.round(l16 * 20) / 100 : 0;
+      if (!near(n0(k("line17b")), want17)) bad.push(`${who} 17b`);
+      sum13 += n0(k("line13")); sum16 += n0(k("line16")); sum17 += n0(k("line17b"));
+    }
+    checks.push({ phase: 2, id: "8889-lines-from-w2s-and-1099sas", ok: !bad.length, detail: bad.join("; ") || undefined });
+    tie(2, "8889-13-equals-sch1-13", round2(sum13), n0(s1("line13")), "Σ Form 8889 line 13 vs Schedule 1 line 13");
+    tie(2, "8889-16-equals-sch1-8f", round2(sum16), n0(s1("line8f")), "Σ Form 8889 line 16 vs Schedule 1 line 8f");
+    tie(2, "8889-17b-equals-sch2-17c", round2(sum17), docs.f1040s2?.length ? n0(s2("line17c")) : 0, "Σ Form 8889 line 17b vs Schedule 2 line 17c");
+  }
   if (docs.f1040s3?.length) tie(2, "sch3-8-equals-1040-20", n0(s3("line8")), n0(line("line20")), "Schedule 3 line 8 vs 1040 line 20");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
   const m59 = keyed(docs.f8959?.[0], "f8959");
   if (docs.f8959?.length) {
     tie(2, "8959-18-equals-sch2-11", n0(m59("line18")), n0(s2("line11")), "Form 8959 line 18 vs Schedule 2 line 11");
-    tie(2, "8959-24-equals-1040-25c", n0(m59("line24")), n0(line("line25c")), "Form 8959 line 24 vs 1040 line 25c");
+    tie(2, "8959-24-equals-1040-25c", round2(n0(m59("line24")) + (t.gamblingWinnings ?? []).filter((g) => g.recipient !== "spouse" || t.filingStatus === "MFJ").reduce((a, g) => a + g.federalWithheld, 0)), n0(line("line25c")), "Form 8959 line 24 + W-2G box 4 vs 1040 line 25c");
   }
   const m60 = keyed(docs.f8960?.[0], "f8960");
   if (docs.f8960?.length) tie(2, "8960-17-equals-sch2-12", n0(m60("line17")), n0(s2("line12")), "Form 8960 line 17 vs Schedule 2 line 12");
@@ -870,7 +905,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

@@ -188,6 +188,14 @@ export const SOCIAL_SECURITY_TAXABILITY = {
   secondTierRate: 0.85,
 };
 
+/** HSA contribution limits (Form 8889 line 3, each year's instructions) and the age-55 catch-up. */
+export const HSA_LIMIT: Record<number, { self: number; family: number }> = {
+  2023: { self: 3850, family: 7750 },
+  2024: { self: 4150, family: 8300 },
+  2025: { self: 4300, family: 8550 },
+};
+export const HSA_CATCH_UP = 1000;
+
 /**
  * Alternative minimum tax (Form 6251, each year's form and instructions): the exemption and
  * where its 25% phase-out starts (single/HOH, joint/QSS, MFS), and where the 28% rate begins
