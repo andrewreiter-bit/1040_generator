@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, IsoExercise, ItemizedDeductions, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, IsoExercise, ItemizedDeductions, RentalProperty, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { isQualifyingChild } from "../tax/household";
 import { mergeSourceDocuments } from "./ty25-documents";
@@ -110,6 +110,15 @@ export const CHECKED_FORM_LINES: Array<{ form: string; element: string; label: s
   { form: "IRS8889", element: "HSAEmployerContributionAmt", label: "8889 9", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line9) ?? [] },
   { form: "IRS8889", element: "TotalHSAContributionAmt", label: "8889 11", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line11) ?? [] },
   { form: "IRS8889", element: "HSALimitedContributionAmt", label: "8889 12", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line12) ?? [] },
+  // Form 8582 (when filed), Schedule E totals and Form 8995's QBI total: where a passive-activity
+  // or QBI classification goes wrong. (Per-property amounts repeat within one XML block without a
+  // stable order, so the totals are compared.)
+  { form: "IRS8582", element: "TotalPassiveActivityAmt", label: "8582 3", pick: (r) => (r.form8582?.required ? [r.form8582.line3] : []) },
+  { form: "IRS8582", element: "TotalIncomeAmt", label: "8582 10", pick: (r) => (r.form8582?.required && r.form8582.line3 < 0 ? [r.form8582.line10] : []) },
+  { form: "IRS8582", element: "TotalLossesAllowedAmt", label: "8582 11", pick: (r) => (r.form8582?.required && r.form8582.line3 < 0 ? [r.form8582.line11] : []) },
+  { form: "IRS1040ScheduleE", element: "LossesAmt", label: "Sch E 25", pick: (r) => (r.scheduleE ? [-r.scheduleE.line25] : []) },
+  { form: "IRS1040ScheduleE", element: "TotalIncomeOrLossAmt", label: "Sch E 26", pick: (r) => (r.scheduleE ? [r.scheduleE.line26] : []) },
+  { form: "IRS8995", element: "TotQlfyBusinessIncomeOrLossAmt", label: "8995 2", pick: (r) => (r.form8995 && !r.form8995A ? [r.form8995.totalQbi] : []) },
   // Form 4952: line 4g changes the tax but not the 1040 lines' inputs, so check it directly.
   { form: "IRS4952", element: "TotalInvestmentInterestExpAmt", label: "4952 3", pick: (r) => (r.form4952?.required ? [r.form4952.line3] : []) },
   { form: "IRS4952", element: "InvestmentIncomeElectionAmt", label: "4952 4g", pick: (r) => (r.form4952?.required ? [r.form4952.line4g] : []) },
@@ -273,6 +282,11 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^f1098\[\]\.(mortgage_interest|outstanding_principal|points)$/,
   /^f4952\.(currentYearExpenses|COfromBefore|qualDivLineElectedInvest)$/,
   /^f6251\.stockOption$/,
+  // TY25 Schedule E rentals and royalties (values checked in toTaxpayer).
+  /^sche_gen\.(REProfessional|require1099|require1099filed)$/,
+  /^scherentslist\[\]\.(OWNER|activeParticipation|addrUS(AddressLine1|City|State|ZIPCode)|advertising|legal|atRisk|autoExp|isQBI|otherIncome|personalUseDays|propertyType|rentalDays|rentalSold|qualified_business|former_employer|specified_service|material_participant|royalty_passive_portfolio|noFormDepreciation|sch_e_depr_amort_expense_(screener|method))$/,
+  // Whether the other parent of a dependent is the current spouse: no effect on a joint return.
+  /^irs1040\.dependent_detail\[\]\.current_spouse_is_parent$/,
   /^scha_tax\.(stateTaxOrSalesTax|salesTaxesPaid|taxRE|taxPP)$/,
   /^scha_gft\.(cash60|cash30|nonCash50|nonCash30|contrib30CapGain)(CO)?$/, /^scha_gft\.noncash50CO$/,
   /^med_exp\.(medExpDrDentist|medExpPrescYesSCHA)(TP|SP)$/,
@@ -365,7 +379,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       firstName: String(val(d, "dependent_first_name") ?? ""),
       lastName: String(val(d, "dependent_last_name") ?? ""),
       ssn: String(val(d, "dependent_ssn") ?? ""),
-      relationship: RELATIONSHIP[rel] ?? "Other",
+      // TY25 gives no relationship: a child of the current spouse is the couple's child; otherwise
+      // a child is assumed, and the case is put out of scope if any credit depends on it (below).
+      relationship: RELATIONSHIP[rel] ?? (rel ? "Other" : "Child"),
       birthYear: Number(String(val(d, "dependent_date_of_birth") ?? "").slice(0, 4)),
       // Residency for a qualifying child counts months in the taxpayer's home in the U.S.
       monthsInHome: Math.min(num(val(d, "dependent_months_lived")), monthsInUs == null ? 12 : num(monthsInUs)),
@@ -742,6 +758,60 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     corporation: { name: "", street: "", city: "", ein: "" }, dateGranted: "", dateExercised: "",
     exercisePrice: 0, fairMarketValue: isoSpread, shares: 1,
   }] : undefined;
+  // TY25 Schedule E. otherIncome is rents, or royalties (line 4) for a royalty property; the
+  // depreciation override is Schedule E line 18 as given (no Form 4562).
+  const TYPE: Record<string, number> = {
+    "single family residence": 1, "multi-family residence": 2, "vacation/short-term rental": 3, "commercial": 4,
+    "land": 5, "royalties": 6, "self-rental": 7, "other": 8,
+  };
+  const sheGen = rd.sche_gen;
+  const reProfessional = val(sheGen, "REProfessional") === true;
+  const rentals: RentalProperty[] = list(rd, "scherentslist").map((x): RentalProperty => {
+    const typeName = String(val(x, "propertyType") ?? "").toLowerCase();
+    const propertyType = TYPE[typeName];
+    if (!propertyType) outOfScope.add(`Schedule E property type "${val(x, "propertyType")}"`);
+    if (val(x, "atRisk") === false) outOfScope.add("Schedule E activity not all at risk (Form 6198)");
+    if (propertyType !== 6 && val(x, "activeParticipation") === undefined) outOfScope.add("Schedule E rental without an active-participation answer");
+    for (const k of ["autoExp", "rentalSold", "former_employer", "specified_service"]) if (val(x, k) === true) outOfScope.add(`scherentslist[].${k}`);
+    if (num(val(x, "personalUseDays"))) outOfScope.add("Schedule E personal-use days (§ 280A vacation home rules)");
+    const owner = val(x, "OWNER") === "S" ? "spouse" : val(x, "OWNER") === "J" ? "joint" : "primary";
+    if (owner !== "primary" && status !== "MFJ") outOfScope.add(`Schedule E property owned by "${val(x, "OWNER")}" on a ${status} return`);
+    if (val(x, "sch_e_depr_amort_expense_screener") !== undefined && val(x, "noFormDepreciation") === undefined) outOfScope.add("Schedule E depreciation without an override amount (Form 4562)");
+    const royalty = propertyType === 6;
+    const passiveRoyalty = String(val(x, "royalty_passive_portfolio") ?? "");
+    if (royalty && passiveRoyalty && passiveRoyalty !== "Passive" && passiveRoyalty !== "Portfolio") outOfScope.add(`royalty_passive_portfolio=${passiveRoyalty}`);
+    const income = num(val(x, "otherIncome"));
+    const address = [val(x, "addrUSAddressLine1"), val(x, "addrUSCity"), [val(x, "addrUSState"), val(x, "addrUSZIPCode")].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    return {
+      address: royalty ? "" : address, propertyType: propertyType ?? 8,
+      fairRentalDays: royalty ? 0 : num(val(x, "rentalDays")), personalUseDays: 0,
+      qualifiedJointVenture: owner === "joint" && status === "MFJ",
+      activeParticipation: val(x, "activeParticipation") === true,   // a rental without the answer is out of scope (below)
+      materialParticipation: val(x, "material_participant") === true || undefined,
+      royaltyPassive: royalty && passiveRoyalty === "Passive" || undefined,
+      qbi: val(x, "isQBI") === true && val(x, "qualified_business") !== false || undefined,
+      owner,
+      rents: royalty ? 0 : income, royalties: royalty ? income : 0,
+      expenses: {
+        advertising: num(val(x, "advertising")) || undefined,
+        legalProfessional: num(val(x, "legal")) || undefined,
+        depreciation: num(val(x, "noFormDepreciation")) || undefined,
+      },
+    };
+  });
+  // Married filing separately: living with the spouse at any time (not apart all year) matters
+  // for Form 8582 (Part V, no special allowance).
+  const mfsLivedWithSpouse = status === "MFS" ? val(rd.basic3, "livedApartFromSpouse") !== true : undefined;
+  if (status !== "MFJ" && list(f1040, "dependent_detail").some((d) => val(d, "current_spouse_is_parent") === true)) {
+    outOfScope.add("dependent whose other parent is the spouse, not on a joint return");
+  }
+  // A dependent whose relationship isn't given (and isn't the spouse's child) is assumed to be a
+  // child; that's only safe when no credit turns on it.
+  const relationUnknown = list(f1040, "dependent_detail").some((d) => !val(d, "dependent_relationship") && val(d, "current_spouse_is_parent") !== true);
+  if (relationUnknown) {
+    postChecks.push((r) => r.childAndOtherDependentCredit > 0 || r.additionalChildTaxCredit > 0 || r.earnedIncomeCredit > 0 || r.form2441
+      ? "dependent relationship not given, and a credit depends on it" : undefined);
+  }
   // Living apart / legal separation changes only the Social Security base amount, the IRA
   // phase-out range and EIC for a separated spouse; none of those may apply.
   if (["legallySeparated", "livedApartFromSpouse"].some((k) => val(rd.basic3, k) === true)) {
@@ -800,6 +870,10 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     hsa,
     investmentInterest,
     isoExercises,
+    rentals: rentals.length ? rentals : undefined,
+    realEstateProfessional: reProfessional || undefined,
+    scheduleE1099: val(sheGen, "require1099") === true ? { required: true, filed: val(sheGen, "require1099filed") === "Y" } : undefined,
+    mfsLivedWithSpouse,
     gamblingWinnings: gamblingWinnings.length ? gamblingWinnings : undefined,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }

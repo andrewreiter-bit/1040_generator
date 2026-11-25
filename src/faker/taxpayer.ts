@@ -194,13 +194,21 @@ export interface ItemizedDeductions {
 /** One rental real estate property (Schedule E Part I column). */
 export interface RentalProperty {
   address: string;                   // 1a, street, city, state and ZIP
-  /** 1b property type code: 1 single family, 2 multi-family, 3 vacation/short-term, 4 commercial … */
+  /** 1b property type code: 1 single family, 2 multi-family, 3 vacation/short-term, 4 commercial, 5 land, 6 royalties, 7 self-rental, 8 other. */
   propertyType: number;
   fairRentalDays: number;            // 2
   personalUseDays: number;
   qualifiedJointVenture: boolean;
   /** Actively participated (management decisions, ≥ 10% owner). Omitted = yes. */
   activeParticipation?: boolean;
+  /** Materially participated (with `realEstateProfessional`, the rental isn't passive; § 469(c)(7)). */
+  materialParticipation?: boolean;
+  /** Royalties (code 6) from a trade or business: passive (Form 8582 line 2). Omitted = portfolio income. */
+  royaltyPassive?: boolean;
+  /** Treated as a § 199A trade or business: its allowed result is QBI (Form 8995 / 8995-A row). */
+  qbi?: boolean;
+  /** Whose property it is (joint: both spouses). Omitted = primary. */
+  owner?: "primary" | "spouse" | "joint";
   /** Prior-year unallowed passive loss carried forward (Form 8582 line 1c), as a positive amount. */
   priorYearUnallowedLoss?: number;
   rents: number;                     // 3
@@ -528,6 +536,10 @@ export interface FakeTaxpayer {
   /** Legally blind at year end (additional standard deduction). */
   blind?: boolean;
   spouseBlind?: boolean;
+  /** Schedule E lines A/B: payments that required Forms 1099, and whether they were all filed. Omitted = no. */
+  scheduleE1099?: { required: boolean; filed?: boolean };
+  /** A real estate professional (§ 469(c)(7)(B)): materially participated rentals aren't passive. */
+  realEstateProfessional?: boolean;
   /** Married filing separately and the spouse itemizes: the standard deduction is $0 (§ 63(c)(6)(A)). */
   spouseItemizes?: boolean;
   /** Schedule A detail. When present, `itemizedDeductionTotal` is ignored. */

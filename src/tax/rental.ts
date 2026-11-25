@@ -33,6 +33,8 @@ export interface ScheduleELines {
   line24: number;                      // income
   line25: number;                      // losses (≤ 0)
   line26: number;                      // → Schedule 1 line 5
+  /** Line 43: a real estate professional's net from materially participated rentals (reconciliation). */
+  line43?: number;
 }
 
 /**
