@@ -14,7 +14,8 @@
 import { FakeTaxpayer } from "../faker/taxpayer";
 import { computeReturn, ReturnLines } from "../tax/compute";
 import { namesOnReturn } from "../tax/household";
-import { ELECTIVE_DEFERRAL_CODES, Form8880Lines } from "../tax/savers-credit";
+import { Form8880Lines } from "../tax/savers-credit";
+import { coveredByPlan } from "../tax/ira";
 import { BLANK, FieldMap, MappedField, OFF, checkIf, money } from "./types";
 
 const source = (t: FakeTaxpayer) => t.document?.source ?? t;
@@ -70,7 +71,7 @@ function w2Map(taxYear: number): FieldMap {
     }
     fields[`${col}Statutory_ReadOrder[0].c${p}_2[0]`] = { key: `${copy}.box13.statutory`, value: () => OFF };
     fields[`${col}Retirement_ReadOrder[0].c${p}_3[0]`] = {
-      key: `${copy}.box13.retirementPlan`, value: (t) => checkIf(entries(t).some((e) => ELECTIVE_DEFERRAL_CODES.has(e.code))),
+      key: `${copy}.box13.retirementPlan`, value: (t) => checkIf(!!t.w2Records[0] && coveredByPlan(t.w2Records[0])),
     };
     fields[`${col}c${p}_4[0]`] = { key: `${copy}.box13.thirdPartySickPay`, value: () => OFF };
   }

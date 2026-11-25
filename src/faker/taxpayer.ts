@@ -47,6 +47,8 @@ export interface W2Record {
    * code D deferrals; A/B/M/N come only from the answer key.
    */
   box12?: Array<{ code: string; amount: number }>;
+  /** Box 13 "Retirement plan": covered by a plan at work. Omitted = covered when box 12 shows an elective deferral. */
+  retirementPlan?: boolean;
 }
 
 export interface Interest1099 {
@@ -424,6 +426,8 @@ export interface FakeTaxpayer {
   education?: Education;
   /** Child and dependent care expenses and providers (Form 2441). */
   dependentCare?: DependentCare;
+  /** Traditional IRA contributions for the year, per person (IRA deduction, Schedule 1 line 20; Form 8880 line 1). */
+  traditionalIraContributions?: { primary?: number; spouse?: number };
   /** Roth IRA contributions for the year, per person (Form 8880 line 1; not deductible). */
   rothIraContributions?: { primary?: number; spouse?: number };
   /** Full-time student for some part of 5 months of the year (no Saver's credit for that person). */

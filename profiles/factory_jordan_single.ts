@@ -7,9 +7,9 @@ import {
   Dividend1099,
   FilingStatus,
 } from "./taxpayer";
-import { ALASKA_PFD, ssWageBase } from "./tax-year";
+import { ALASKA_PFD, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, ssWageBase } from "./tax-year";
 import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "./schedule-c";
-import { addRetirementSavings, buildRetirement1099Rs } from "./retirement";
+import { addRetirementSavings, addTraditionalIra, buildRetirement1099Rs } from "./retirement";
 import { buildDependentCare } from "./dependent-care";
 import { buildEducation } from "./education";
 import { buildMarketplace } from "./marketplace";
@@ -250,6 +250,8 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   // Marketplace health coverage (Forms 1095-A and 8962; last draws).
   const marketplace = buildMarketplace(faker, taxpayer);
   if (marketplace) taxpayer.marketplace1095As = marketplace;
+  // Traditional IRA contributions (Schedule 1 line 20; last draws).
+  addTraditionalIra(faker, taxpayer, IRA_CONTRIBUTION_LIMIT[taxYear], IRA_CATCH_UP);
   return taxpayer;
 }
 

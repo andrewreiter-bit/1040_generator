@@ -5,7 +5,7 @@
  *   Eligibility (per person): born on or before January 1 of the tax year minus 17, not a
  *     full-time student, not claimed as a dependent (the model has no such flag). An
  *     ineligible person's column is 0.
- *   Line 1  traditional / Roth IRA contributions (the model has Roth only)
+ *   Line 1  traditional and Roth IRA contributions
  *   Line 2  elective deferrals: W-2 box 12 codes D, E, F, G, H, S, AA, BB, EE
  *   Line 4  distributions from IRAs and plans in the testing period, rollovers excluded
  *           (code G). On a joint return BOTH spouses' distributions go in BOTH columns.
@@ -55,7 +55,7 @@ export function form8880(
     && !t.fullTimeStudent?.[p]) as [boolean, boolean];
   const col = (f: (p: "primary" | "spouse") => number): Pair => people.map((p, i) => (eligible[i] ? R(f(p)) : 0)) as Pair;
 
-  const line1 = col((p) => t.rothIraContributions?.[p] ?? 0);
+  const line1 = col((p) => (t.rothIraContributions?.[p] ?? 0) + (t.traditionalIraContributions?.[p] ?? 0));
   const line2 = col((p) => w2s
     .filter((w) => (w.employee ?? "primary") === p)
     .flatMap((w) => w.box12 ?? [])

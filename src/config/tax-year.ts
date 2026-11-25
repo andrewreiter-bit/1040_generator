@@ -189,6 +189,21 @@ export const SOCIAL_SECURITY_TAXABILITY = {
 };
 
 /**
+ * Traditional IRA (IRA Deduction Worksheet, Schedule 1 line 20; Pub 590-A): the contribution
+ * limit and age-50 catch-up, and where the deduction phase-out ends for someone covered by a
+ * workplace plan — single/HOH (and MFS living apart), joint (and QSS), a joint filer who isn't
+ * covered but whose spouse is, and MFS living together. Each range is $10,000 wide except the
+ * covered joint filer's ($20,000).
+ */
+export const IRA_CONTRIBUTION_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000 };
+export const IRA_CATCH_UP = 1000;
+export const IRA_PHASEOUT_END: Record<number, { single: number; joint: number; spouseCovered: number; mfsTogether: number }> = {
+  2023: { single: 83000, joint: 136000, spouseCovered: 228000, mfsTogether: 10000 },
+  2024: { single: 87000, joint: 143000, spouseCovered: 240000, mfsTogether: 10000 },
+  2025: { single: 89000, joint: 146000, spouseCovered: 246000, mfsTogether: 10000 },
+};
+
+/**
  * Premium tax credit (Form 8962), from each year's Form 8962 instructions. The poverty line
  * is the prior year's (Tables 1-1 to 1-3): first person + each additional person; the tables
  * are linear. Repayment limitation (Table 5): by line 5 percentage, single vs other filers;
