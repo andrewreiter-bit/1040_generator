@@ -261,6 +261,28 @@ export interface Retirement1099R {
   statePayerNumber?: string;
 }
 
+/** A care provider for Form 2441 Part I. */
+export interface CareProvider {
+  name: string;
+  street: string;
+  /** "City, ST ZIP". */
+  city: string;
+  /** SSN for an individual, EIN for a daycare center. */
+  tin: string;
+  /** Household employee (e.g. a nanny): Schedule H territory, not modelled. Omitted = no. */
+  householdEmployee?: boolean;
+  amountPaid: number;
+}
+
+/** Child and dependent care (Form 2441). */
+export interface DependentCare {
+  providers: CareProvider[];
+  /** Qualified expenses incurred and paid this year, per dependent (index into `dependents`). */
+  expenses: Array<{ dependentIndex: number; amount: number }>;
+  /** Prior-year expenses paid this year (Form 2441 line 9b / Worksheet A; not modelled). */
+  priorYearExpensesPaid?: number;
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -337,6 +359,8 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Child and dependent care expenses and providers (Form 2441). */
+  dependentCare?: DependentCare;
   /** Roth IRA contributions for the year, per person (Form 8880 line 1; not deductible). */
   rothIraContributions?: { primary?: number; spouse?: number };
   /** Full-time student for some part of 5 months of the year (no Saver's credit for that person). */

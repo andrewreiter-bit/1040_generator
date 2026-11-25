@@ -33,12 +33,12 @@ import { scheduleEicChildren } from "../src/fieldmaps/credits";
 import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
-import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
+import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
 import { saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f8880", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8880", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -526,10 +526,40 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     if (!near(l8, n0(line("line11")))) bad.push(`8 ${l8} vs 1040 line 11`);
     if (rate !== saversCreditRate(t.taxYear, t.filingStatus, l8)) bad.push(`9 ${rate} vs table`);
     if (!near(l10, Math.round(l7 * rate * 100) / 100) && !near(l10, Math.round(l7 * rate))) bad.push(`10 ${l10} vs 7 × 9`);
-    if (!near(l11, n0(line("line18")))) bad.push(`11 ${l11} vs 1040 line 18`);
+    const after2441 = Math.max(0, round2(n0(line("line18")) - n0(s3("line2"))));
+    if (!near(l11, after2441)) bad.push(`11 ${l11} vs 1040 line 18 − Schedule 3 line 2`);
     if (!near(l12, Math.min(l10, l11))) bad.push(`12 ${l12} vs min(10, 11)`);
     checks.push({ phase: 2, id: "8880-lines-from-w2s-and-1099rs", ok: !bad.length, detail: bad.join("; ") || undefined });
     tie(2, "8880-12-equals-sch3-4", l12, n0(s3("line4")), "Form 8880 line 12 vs Schedule 3 line 4");
+  }
+  // ── Form 2441 (child and dependent care), checked from the household's care records ──
+  const m41 = keyed(docs.f2441?.[0], "f2441");
+  if (docs.f2441?.length) {
+    const care = t.dependentCare!;
+    const bad: string[] = [];
+    const paid = round2(care.providers.reduce((x, p) => x + p.amountPaid, 0));
+    const listed = round2([1, 2, 3].reduce((x, k) => x + n0(m41(`line2.${k}.expenses`)), 0));
+    if (care.providers.length <= 3 && !near(round2([1, 2, 3].reduce((x, k) => x + n0(m41(`provider${k}.amount`)), 0)), paid)) bad.push("Part I amounts vs providers");
+    const qualifying = (k: number) => {
+      const ssn = m41(`line2.${k}.ssn`); const d = t.dependents.find((x) => x.ssn === ssn);
+      return !ssn || (!!d && d.birthYear <= t.taxYear && ((isQualifyingChild(d, t) && t.taxYear - d.birthYear < 13) || (!!d.disabled && d.monthsInHome > 6)));
+    };
+    if (![1, 2, 3].every(qualifying)) bad.push("line 2 lists a non-qualifying person");
+    const nPersons = [1, 2, 3].filter((k) => n0(m41(`line2.${k}.expenses`)) > 0).length;
+    const l3 = n0(m41("line3")), l4 = n0(m41("line4")), l5 = n0(m41("line5")), l6 = n0(m41("line6")), l7 = n0(m41("line7"));
+    if (!near(l3, Math.min(listed, nPersons >= 2 ? 6000 : 3000))) bad.push(`3 ${l3}`);
+    const earned = (who: string) => round2(includedW2s(t).filter((w) => (w.employee ?? "primary") === who).reduce((x, w) => x + w.wages, 0)
+      + r.scheduleSE.filter((s) => s.owner === who).reduce((x, s) => x + s.combined - s.deduction, 0));
+    if (!near(l4, Math.max(0, earned("primary")))) bad.push(`4 ${l4} vs earned income`);
+    if (!near(l5, t.filingStatus === "MFJ" ? Math.max(0, earned("spouse")) : l4)) bad.push(`5 ${l5}`);
+    if (!near(l6, Math.min(l3, l4, l5))) bad.push(`6 ${l6}`);
+    if (!near(l7, n0(line("line11")))) bad.push(`7 ${l7} vs 1040 line 11`);
+    const rate = l7 <= 15000 ? 35 : Math.max(20, 35 - Math.ceil((l7 - 15000) / 2000));
+    if (Number(m41("line8")) !== rate) bad.push(`8 ${m41("line8")} vs ${rate}`);
+    if (!near(n0(m41("line10")), n0(line("line18")))) bad.push("10 vs 1040 line 18");
+    if (!near(n0(m41("line11")), Math.min(n0(m41("line9c")), n0(m41("line10"))))) bad.push("11 vs min(9c, 10)");
+    checks.push({ phase: 2, id: "2441-lines-from-household", ok: !bad.length, detail: bad.join("; ") || undefined });
+    tie(2, "2441-11-equals-sch3-2", n0(m41("line11")), n0(s3("line2")), "Form 2441 line 11 vs Schedule 3 line 2");
   }
   if (docs.f1040s3?.length) tie(2, "sch3-8-equals-1040-20", n0(s3("line8")), n0(line("line20")), "Schedule 3 line 8 vs 1040 line 20");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
@@ -668,7 +698,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   if (docs.f1040s8?.length) {
     tie(2, "sch8812-14-equals-1040-19", n0(s8("line14")), n0(line("line19")), "Schedule 8812 line 14 vs 1040 line 19");
     // Credit Limit Worksheet A: line 18 less Schedule 3 line 4 (the only Schedule 3 credit modelled).
-    if (s8("line13")) tie(2, "sch8812-13-is-18-less-sch3-4", n0(s8("line13")), Math.max(0, round2(n0(line("line18")) - n0(s3("line4")))), "Schedule 8812 line 13 vs 1040 line 18 − Schedule 3 line 4");
+    if (s8("line13")) tie(2, "sch8812-13-is-18-less-sch3-2-4", n0(s8("line13")), Math.max(0, round2(n0(line("line18")) - n0(s3("line2")) - n0(s3("line4")))), "Schedule 8812 line 13 vs 1040 line 18 − Schedule 3 lines 2 and 4");
     tie(2, "sch8812-27-equals-1040-28", n0(s8("line27")), n0(line("line28")), "Schedule 8812 line 27 vs 1040 line 28");
   }
   const sei = keyed(docs.f1040sei?.[0], "f1040sei");
@@ -682,7 +712,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f8880", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8880", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

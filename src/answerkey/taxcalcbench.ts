@@ -184,6 +184,8 @@ const SUPPORTED_PATHS: RegExp[] = [
   // SSA-1099. Medicare / drug premiums matter only when itemizing (no bench case itemizes).
   /^ssa_1099\.ssa_1099_grp\[\]\.ssa_(who_applies_to|net_benefits|federal_withholding|medicare_premiums|prescription_drug_premiums)$/,
   /^irs1040\.(tp_blind|sp_blind)$/,
+  // Form 2441: care providers and prior-year expenses paid this year (line 9b).
+  /^irs2441\.(carryover|care_provider_grp\[\]\.(provider_name|street_address|city|state|zip|provider_ssn|provider_ein|paid_to_provider)|qualifying_person_grp\[\]\.(person|qualifying_expenses_paid))$/,
   // Full-time student: no Saver's credit for that person (Form 8880).
   /^irs1040\.(tp_student|sp_student)$/,
   // Schedule 1: unemployment (1099-G), educator expenses, student loan interest.
@@ -443,6 +445,20 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       medicarePremiums: num(val(g, "ssa_medicare_premiums")) || undefined,
     };
   });
+  // Form 2441. Expenses per qualifying person point at a dependent_detail entry by an id the
+  // dependents don't carry, so they're used only when the return has a single dependent.
+  const careProviders = list(rd.irs2441, "care_provider_grp").map((p) => ({
+    name: String(val(p, "provider_name") ?? ""),
+    street: String(val(p, "street_address") ?? ""),
+    city: [val(p, "city"), val(p, "state"), val(p, "zip")].filter(Boolean).join(" "),
+    tin: String(val(p, "provider_ssn") ?? val(p, "provider_ein") ?? ""),
+    amountPaid: num(val(p, "paid_to_provider")),
+  }));
+  const careCarryover = num(val(rd.irs2441, "carryover"));
+  const careExpenses = list(rd.irs2441, "qualifying_person_grp").map((q) => ({ dependentIndex: 0, amount: num(val(q, "qualifying_expenses_paid")) }));
+  const dependentCare = careProviders.length || careCarryover || careExpenses.length
+    ? { providers: careProviders, expenses: careExpenses, priorYearExpensesPaid: careCarryover || undefined }
+    : undefined;
   const CODES = new Set<string>(["1", "2", "7", "G", "Q"]);
   const retirement1099Rs = list(rd, "irs1099_r").map((x): Retirement1099R => {
     const code = String(val(x, "f1099_r_distribution_cd_input") ?? "");
@@ -499,6 +515,12 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     }
     dependents.push(dep);
   }
+  if (dependentCare?.expenses.length && (list(f1040, "dependent_detail").length !== 1 || dependents.length !== 1)) {
+    outOfScope.add("Form 2441 expenses with several dependents (the input's person references can't be resolved)");
+  } else if (dependentCare && !dependentCare.expenses.length && dependentCare.providers.some((p) => p.amountPaid > 0)
+    && dependents.some((d) => taxYear - d.birthYear < 13 || (d.disabled && d.monthsInHome > 6))) {
+    outOfScope.add("Form 2441 care for a qualifying person without per-person expenses");
+  }
   for (const k of ["tp_dependent", "sp_dependent", "eic_not_allowed", "qualifying_child_of_another"]) {
     if (val(f1040, k) === true) outOfScope.add(`irs1040.${k}`);
   }
@@ -544,6 +566,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     capitalLossCarryover,
     ssa1099s,
     retirement1099Rs: retirement1099Rs.length ? retirement1099Rs : undefined,
+    dependentCare,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }
       : undefined,
