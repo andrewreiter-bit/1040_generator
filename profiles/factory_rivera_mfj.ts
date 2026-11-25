@@ -7,13 +7,14 @@ import {
   Dividend1099,
   FilingStatus,
 } from "./taxpayer";
-import { ALASKA_PFD, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, ssWageBase } from "./tax-year";
+import { ALASKA_PFD, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, ssWageBase } from "./tax-year";
 import { addBusinessPayrollAndProperty, addVehicleCosts, buildScheduleC } from "./schedule-c";
 import { addRetirementSavings, addTraditionalIra, buildRetirement1099Rs } from "./retirement";
 import { buildDependentCare } from "./dependent-care";
 import { buildEducation } from "./education";
 import { buildMarketplace } from "./marketplace";
 import { buildIsoExercises } from "./iso";
+import { addHsa } from "./hsa";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -274,6 +275,8 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   // Incentive stock option exercises (Form 3921 → AMT; last draws).
   const isoExercises = buildIsoExercises(faker, taxpayer);
   if (isoExercises) taxpayer.isoExercises = isoExercises;
+  // Health savings account (Form 8889, W-2 code W, Form 1099-SA; last draws).
+  addHsa(faker, taxpayer, HSA_LIMIT[taxYear], HSA_CATCH_UP);
   return taxpayer;
 }
 

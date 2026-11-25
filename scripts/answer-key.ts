@@ -1,7 +1,9 @@
 #!/usr/bin/env ts-node
 /**
  * scripts/answer-key.ts — score computeReturn against TaxCalcBench's hand-built
- * TY24 federal answer key (github.com/column-tax/tax-calc-bench).
+ * federal answer keys (github.com/column-tax/tax-calc-bench): TY24, and TY25's federal
+ * cases (ty25-us-*, whose W-2s and 1099s are PDFs read with scripts/pdf-fill-text.py, which
+ * needs python3 with pypdf).
  *
  * The dataset is NOT vendored here (it is evaluation-only data; see
  * src/answerkey/taxcalcbench.ts). Point the script at a local clone:
@@ -11,8 +13,10 @@
  *   TAXCALCBENCH_DIR=../tax-calc-bench npm run answer-key -- --case single-w2-minimal-wages-alaska --verbose
  *
  * Scoring mirrors TaxCalcBench: 19 Form 1040 lines, "strict" = whole-dollar
- * match on every line, "lenient" = every line within ±$5. Cases whose inputs
- * use anything our model can't represent are listed as out of scope.
+ * match on every line, "lenient" = every line within ±$5. A few supporting-form
+ * lines the 1040 can't see into (Form 8889) count too, except where the engine
+ * follows the IRS instructions and the benchmark doesn't (KNOWN_DIFFERENCES).
+ * Cases whose inputs use anything our model can't represent are listed as out of scope.
  */
 import { Command } from "commander";
 import chalk from "chalk";
@@ -20,7 +24,8 @@ import fs from "fs-extra";
 import path from "path";
 import { computeReturn } from "../src/tax/compute";
 import {
-  DETAIL_LINES, KNOWN_BAD_CASES, SCORED_LINES, expectedAmount, expectedAmounts, loadTy24Cases, toTaxpayer,
+  CHECKED_FORM_LINES, DETAIL_LINES, KNOWN_BAD_CASES, KNOWN_DIFFERENCES, SCORED_LINES, expectedAmount, expectedAmounts,
+  loadTy24Cases, loadTy25Cases, toTaxpayer,
 } from "../src/answerkey/taxcalcbench";
 
 const program = new Command();
@@ -28,6 +33,7 @@ program
   .option("-b, --bench-dir <dir>", "Local clone of column-tax/tax-calc-bench (or set TAXCALCBENCH_DIR)")
   .option("-c, --case <name>", "Only run cases whose name contains this text")
   .option("-v, --verbose", "Print every scored line for in-scope cases")
+  .option("-y, --year <year>", "2024, 2025 or all", "all")
   .option("--json <file>", "Write per-case results to a JSON file")
   .parse(process.argv);
 const opts = program.opts();
@@ -45,11 +51,35 @@ interface CaseResult {
     console.error(chalk.red("Set --bench-dir or TAXCALCBENCH_DIR to a local clone of github.com/column-tax/tax-calc-bench"));
     process.exit(2);
   }
-  const cases = loadTy24Cases(path.resolve(benchDir)).filter((c) => !opts.case || c.name.includes(opts.case));
-  const results: CaseResult[] = [];
+  const years = opts.year === "all" ? [2024, 2025] : [Number(opts.year)];
+  let anyFail = false;
+  const allResults: Array<CaseResult & { year: number }> = [];
+  for (const year of years) {
+    let cases: ReturnType<typeof loadTy24Cases>;
+    try {
+      cases = (year === 2024 ? loadTy24Cases : loadTy25Cases)(path.resolve(benchDir)).filter((c) => !opts.case || c.name.includes(opts.case));
+    } catch (err) {
+      // TY25 reads its PDFs with python3 + pypdf; without them, still score the other year.
+      if (year !== 2025 || opts.year === "2025") throw err;
+      console.log(chalk.yellow(`\n── TY25 skipped: ${String((err as Error).message).split("\n")[0]} (needs python3 with pypdf)`));
+      continue;
+    }
+    const results = runYear(cases, year);
+    anyFail ||= results.some((r) => r.status === "fail");
+    allResults.push(...results.map((r) => ({ ...r, year })));
+  }
+  if (opts.json) await fs.writeJson(path.resolve(opts.json), allResults, { spaces: 1 });
+  process.exit(anyFail ? 1 : 0);
+})().catch((err) => {
+  console.error(chalk.red(err.stack ?? String(err)));
+  process.exit(2);
+});
 
+function runYear(cases: ReturnType<typeof loadTy24Cases>, year: number): CaseResult[] {
+  const results: CaseResult[] = [];
+  console.log(chalk.bold(`\n── TY${year % 100} ──`));
   for (const c of cases) {
-    const { taxpayer, outOfScope, postChecks } = toTaxpayer(c.input, 2024);
+    const { taxpayer, outOfScope, postChecks } = toTaxpayer(c.input, year);
     const r = taxpayer ? computeReturn(taxpayer) : undefined;
     const post = r ? postChecks.map((f) => f(r)).filter((x): x is string => !!x) : [];
     const reasons = [...outOfScope, ...post, ...(r?.unsupported ?? [])];
@@ -60,6 +90,22 @@ interface CaseResult {
           return { line: s.line, expected, actual, diff: actual - expected };
         })
       : [];
+    // Supporting-form lines that count (Form 8889), unless listed as a known difference.
+    const disagreements: string[] = [];
+    if (r) {
+      for (const d of CHECKED_FORM_LINES) {
+        const exp = expectedAmounts(c.expectedXml, d.form, d.element);
+        const got = d.pick(r).map((x) => Math.round(x + 1e-6));
+        if (!exp.length && !got.length) continue;
+        const n = Math.max(exp.length, got.length);
+        for (let i = 0; i < n; i++) {
+          const e = exp[i] ?? 0, a = got[i] ?? 0;
+          const known = KNOWN_DIFFERENCES[c.name]?.[d.label];
+          if (known && e !== a) { disagreements.push(`${d.label}: expected ${e}, got ${a}`); continue; }
+          lines.push({ line: d.label, expected: e, actual: a, diff: a - e });
+        }
+      }
+    }
 
     let status: CaseResult["status"];
     if (KNOWN_BAD_CASES[c.name]) { status = "known-bad"; reasons.unshift(KNOWN_BAD_CASES[c.name]); }
@@ -78,8 +124,13 @@ interface CaseResult {
       for (const l of lines) {
         if (l.diff === 0 && !opts.verbose) continue;
         const color = l.diff === 0 ? chalk.gray : Math.abs(l.diff) <= 5 ? chalk.yellow : chalk.red;
-        console.log(color(`    line ${l.line.padEnd(4)} expected ${String(l.expected).padStart(9)}  got ${String(l.actual).padStart(9)}  (${l.diff >= 0 ? "+" : ""}${l.diff})`));
+        console.log(color(`    line ${l.line.padEnd(7)} expected ${String(l.expected).padStart(9)}  got ${String(l.actual).padStart(9)}  (${l.diff >= 0 ? "+" : ""}${l.diff})`));
       }
+    }
+    if (disagreements.length && status !== "out-of-scope" && status !== "known-bad") {
+      console.log(chalk.cyan(`    disagrees with benchmark (IRS rule followed): ${disagreements.join("; ")}`));
+      const why = [...new Set(Object.values(KNOWN_DIFFERENCES[c.name] ?? {}))];
+      why.forEach((w) => console.log(chalk.gray(`      ${w}`)));
     }
     // Supporting forms: where a 1040 difference starts (shown for mismatches, and with --verbose).
     if (r && (status === "fail" || status === "lenient" || (opts.verbose && status !== "known-bad"))) {
@@ -97,7 +148,7 @@ interface CaseResult {
 
   const count = (s: CaseResult["status"]) => results.filter((r) => r.status === s).length;
   const inScope = count("pass") + count("lenient") + count("fail");
-  console.log(chalk.bold(`\nTY24 answer key: ${results.length} cases — ${inScope} in scope`));
+  console.log(chalk.bold(`\nTY${year % 100} answer key: ${results.length} cases — ${inScope} in scope`));
   console.log(`  ${chalk.green("✓ strict match")}   ${count("pass")}/${inScope}`);
   console.log(`  ${chalk.yellow("≈ within ±$5")}    ${count("lenient")}/${inScope}`);
   console.log(`  ${chalk.red("✗ mismatch")}       ${count("fail")}/${inScope}`);
@@ -115,10 +166,5 @@ interface CaseResult {
   console.log(chalk.bold("\nMost common reasons a case is out of scope:"));
   [...blockers.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)
     .forEach(([b, n]) => console.log(`  ${String(n).padStart(3)}  ${b}`));
-
-  if (opts.json) await fs.writeJson(path.resolve(opts.json), results, { spaces: 1 });
-  process.exit(count("fail") > 0 ? 1 : 0);
-})().catch((err) => {
-  console.error(chalk.red(err.stack ?? String(err)));
-  process.exit(2);
-});
+  return results;
+}

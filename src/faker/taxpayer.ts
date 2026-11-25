@@ -356,6 +356,42 @@ export interface IsoExercise {
   account?: string;
 }
 
+/** One person's health savings account (Form 8889; Form 1099-SA for distributions). */
+export interface HsaAccount {
+  /** HDHP coverage type (Form 8889 line 1); with `months`, the type on December 1 or the last covered month. */
+  coverage: "self" | "family";
+  /**
+   * Months the person was an eligible individual on the 1st of the month, by coverage type (Line 3
+   * Limitation Chart). Omitted = eligible all 12 months with `coverage`.
+   */
+  months?: { self: number; family: number };
+  /** Coverage on December 1, when the person was eligible then (last-month rule). */
+  decemberCoverage?: "self" | "family";
+  /**
+   * Elects the last-month rule: eligible on December 1 → treated as eligible all year with that
+   * coverage (2025 instructions: "you may consider yourself"). The testing period (Part III) isn't modelled.
+   */
+  lastMonthRule?: boolean;
+  /** Contributions the person made (not through the employer or a cafeteria plan), line 2. */
+  contributions: number;
+  /** Form 1099-SA, when the HSA paid out during the year. */
+  distribution?: {
+    trustee: { name: string; street: string; city: string; tin: string };
+    account?: string;
+    gross: number;             // box 1 (distribution code 1)
+    qualifiedMedical: number;  // Form 8889 line 15
+  };
+}
+
+/** Form W-2G, gambling winnings (Schedule 1 line 8b; box 4 withholding → Form 1040 line 25c). */
+export interface GamblingWinnings {
+  recipient: "primary" | "spouse";
+  payerName: string;
+  payerTin: string;
+  winnings: number;        // box 1
+  federalWithheld: number; // box 4
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -376,6 +412,8 @@ export interface DocumentContext {
   retirementIndex?: number;
   /** Which education student (index into source.education.students): Form 1098-T, Form 8863 page 2. */
   educationIndex?: number;
+  /** Whose HSA (Form 8889, Form 1099-SA). */
+  hsaPerson?: "primary" | "spouse";
   /** Which ISO exercise (index into the included exercises): Form 3921. */
   isoIndex?: number;
   /** Which Marketplace policy (index into source.marketplace1095As): Form 1095-A. */
@@ -438,6 +476,10 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Health savings accounts, per person (Form 8889). Employer contributions are W-2 box 12 code W. */
+  hsa?: { primary?: HsaAccount; spouse?: HsaAccount };
+  /** Forms W-2G (gambling winnings). */
+  gamblingWinnings?: GamblingWinnings[];
   /** Incentive stock option exercises (Forms 3921 → Form 6251 line 2i). */
   isoExercises?: IsoExercise[];
   /** Health Insurance Marketplace coverage (Forms 1095-A → Form 8962). */

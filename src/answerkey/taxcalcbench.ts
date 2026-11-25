@@ -14,9 +14,10 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { isQualifyingChild } from "../tax/household";
+import { mergeSourceDocuments } from "./ty25-documents";
 
 type Json = unknown;
 
@@ -77,6 +78,48 @@ export function loadTy24Cases(benchDir: string): BenchCase[] {
       expectedXml: fs.readFileSync(path.join(dataDir, name, "output.xml"), "utf8"),
     }));
 }
+
+/**
+ * TY25 federal cases (ty25-us-*). The 40 state cases' expected output is the state return only
+ * (no IRS1040), so they score no federal line and aren't loaded. Source documents are read from
+ * the PDFs at run time (ty25-documents.ts) and merged into remaining_data.json's answers.
+ */
+export function loadTy25Cases(benchDir: string): BenchCase[] {
+  const dataDir = path.join(benchDir, "tax_calc_bench", "ty25", "test_data");
+  if (!fs.existsSync(dataDir)) throw new Error(`TaxCalcBench TY25 data not found at ${dataDir}`);
+  return fs.readdirSync(dataDir)
+    .filter((d) => /^ty25-us-/.test(d) && fs.existsSync(path.join(dataDir, d, "input", "remaining_data.json")))
+    .sort()
+    .map((name) => {
+      const input = JSON.parse(fs.readFileSync(path.join(dataDir, name, "input", "remaining_data.json"), "utf8"));
+      mergeSourceDocuments(path.join(dataDir, name, "input"), input.input.return_data);
+      return { name, input, expectedXml: fs.readFileSync(path.join(dataDir, name, "output.xml"), "utf8") };
+    });
+}
+
+/**
+ * Supporting-form lines that count toward a case's result like the 1040 lines (a mismatch fails
+ * the case), for forms the 19 scored lines can't see into. Form 8889 line 13 isn't listed: it
+ * reaches line 10 through Schedule 1 line 13, which is scored.
+ */
+export const CHECKED_FORM_LINES: Array<{ form: string; element: string; label: string; pick: (r: ReturnLines) => number[] }> = [
+  { form: "IRS8889", element: "HSALimitedAnnualDeductibleAmt", label: "8889 3", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line3) ?? [] },
+  { form: "IRS8889", element: "HSALimitedDeductibleAllwdAmt", label: "8889 5", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line5) ?? [] },
+  { form: "IRS8889", element: "HSAFamilyDeductibleAmt", label: "8889 6", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line6) ?? [] },
+  { form: "IRS8889", element: "HSALimitedGrossContributionAmt", label: "8889 8", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line8) ?? [] },
+  { form: "IRS8889", element: "HSAEmployerContributionAmt", label: "8889 9", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line9) ?? [] },
+  { form: "IRS8889", element: "TotalHSAContributionAmt", label: "8889 11", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line11) ?? [] },
+  { form: "IRS8889", element: "HSALimitedContributionAmt", label: "8889 12", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line12) ?? [] },
+];
+
+/**
+ * Lines where the engine follows the IRS instructions and the expected output doesn't. Shown as
+ * "disagrees with benchmark" instead of failing the case; every other checked line still counts.
+ */
+export const KNOWN_DIFFERENCES: Record<string, Record<string, string>> = (() => {
+  const rule1 = "2025 Form 8889 line 3 rule 1 and 26 U.S.C. 223(b)(5) (married per section 7703, so separate filers too): the spouse's family HDHP coverage puts the filer on the family amount ($8,550 × 6 ÷ 12), and line 6 splits it with the spouse (Steps 1–4); the benchmark uses the filer's own self-only coverage ($4,300 × 6 ÷ 12)";
+  return { "ty25-us-006": { "8889 3": rule1, "8889 5": rule1, "8889 6": rule1, "8889 8": rule1, "8889 12": rule1 } };
+})();
 
 /** Value of /Return/ReturnData/IRS1040/<element>, or 0 when absent. */
 export function expectedAmount(xml: string, element: string): number {
@@ -164,7 +207,7 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^w2\[\]\.w2_state_local_tax_grp\[\]\./,
   /^w2\[\]\.other_deductions\[\]\./,          // box 14: informational
   /^irs1040_scheduleb\.irs1099_int\[\]\.(interest_1099int_(who_applies_to|payer|payer_ein|interest|fed_inc_tax_withheld|early_withdrawal)|int_payer_\w+|irs1099_int_state\[\]\.\w+)$/,
-  /^irs1040_scheduleb\.irs1099_div\[\]\.dividend_1099div_(who_applies_to|payer|ordinary_div|qualified_div|capital_gain_distr|nondividend_distributions)$/,
+  /^irs1040_scheduleb\.irs1099_div\[\]\.dividend_1099div_(who_applies_to|payer|ordinary_div|qualified_div|capital_gain_distr|nondividend_distributions|fed_wh)$/,
   /^irs_payment\./,                            // direct debit of a balance due
   // Schedule C: identity, Part I questions, income and expense lines. wages_paid / UBIA /
   // SSTB matter only above the § 199A threshold, which the engine reports as unsupported.
@@ -204,6 +247,13 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^irs1040_schedule1\.alaska_permanent_dividend_(tp|sp)_input$/,
   // Form 1099-R (box 7 codes outside 1/2/7/G/Q are reported separately).
   /^irs1099_r\[\]\.(who_applies_to|corrected_ind_checkbox|payer_ein_input|payer_name_business_name_input|payer_us_address_(input|city_nm_input|state_abbreviation_cd_input|zip_cd_input)|phone_num_input)$/,
+  // TY25: navigation answers ("did you have an HSA?") whose details are asked separately.
+  /^\w+_screen$/, /^hsa_account$/, /^requested_to_see_expert_assist_offer$/,
+  // TY25 HSAs (Form 8889): contributions, coverage on December 1, and coverage months when it changed.
+  /^hsa\.hsa(ContribCurYr|LastMonthRuleStatus|StatusChangeDurYr)(TP|SP)$/,
+  /^hsa_addtl\.hsaMonthsCover(Self|Family)(TP|SP)$/,
+  // TY25 Forms W-2G (read from the PDFs; see ty25-documents.ts).
+  /^wg2\[\]\.(nonStandard|w2g_(who_applies_to|payer|winnings|fed_wh))$/,
   /^irs1099_r\[\]\.(gross_distribution_amt_input|taxable_amt_input|txbl_amount_not_determined_ind_input|total_distribution_ind_input|federal_income_tax_withheld_amt_input|employee_contributions_amt_input|f1099_r_distribution_cd_input|irasepsimple_ind_input)$/,
 ];
 
@@ -212,6 +262,9 @@ const UNCOLLECTED_BOX12 = new Set(["A", "B", "M", "N"]);
 
 /** W-2 box 12 elective deferrals (Form 8880 line 2). */
 const RETIREMENT_BOX12 = new Set(["D", "E", "F", "G", "H", "S", "AA", "BB", "EE"]);
+
+/** W-2 box 12 code W: employer HSA contributions (Form 8889 line 9). */
+const HSA_BOX12 = new Set(["W"]);
 
 /** W-2 box 12 codes that never change the scored 1040 lines. */
 const NEUTRAL_BOX12 = new Set(["C", "DD", "L"]);
@@ -265,7 +318,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   for (const [p, v] of leaves(rd)) {
     if (p === "w2[].employers_use_grp[].box_12_code") {
       const code = String(v);
-      if (!RETIREMENT_BOX12.has(code) && !NEUTRAL_BOX12.has(code) && !UNCOLLECTED_BOX12.has(code)) outOfScope.add(`W-2 box 12 code ${code}`);
+      if (!RETIREMENT_BOX12.has(code) && !NEUTRAL_BOX12.has(code) && !UNCOLLECTED_BOX12.has(code) && !HSA_BOX12.has(code)) outOfScope.add(`W-2 box 12 code ${code}`);
       continue;
     }
     if (p === "w2[].employers_use_grp[].box_12_amount") continue;
@@ -324,7 +377,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       retirementPlan: val(w, "retirement_plan") === true,
       box12: list(w, "employers_use_grp")
         .map((e) => ({ code: String(val(e, "box_12_code") ?? ""), amount: num(val(e, "box_12_amount")) }))
-        .filter((e) => UNCOLLECTED_BOX12.has(e.code) || RETIREMENT_BOX12.has(e.code)),
+        .filter((e) => UNCOLLECTED_BOX12.has(e.code) || RETIREMENT_BOX12.has(e.code) || HSA_BOX12.has(e.code)),
     };
   });
 
@@ -343,6 +396,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     ordinaryDividends: num(val(d, "dividend_1099div_ordinary_div")),
     qualifiedDividends: num(val(d, "dividend_1099div_qualified_div")),
     totalCapitalGain: num(val(d, "dividend_1099div_capital_gain_distr")),
+    federalWithheld: num(val(d, "dividend_1099div_fed_wh")) || undefined,
   }));
 
   const scheduleCs: ScheduleCBusiness[] = list(rd, "irs1040_schedulec").map((c) => {
@@ -578,6 +632,31 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       && (tpAge < 18 || earned < halfSupport);
     education = { students, aotcNonrefundableOnly: nonrefundableOnly || undefined };
   }
+  // TY25 HSAs. December coverage is asked for the last-month rule, but the input has no election,
+  // so the rule isn't applied (the 2025 instructions: "you may consider yourself" eligible all
+  // year); when coverage changed during the year, the months come from hsa_addtl.
+  const hsaPerson = (sfx: "TP" | "SP"): HsaAccount | undefined => {
+    const contributions = num(val(rd.hsa, `hsaContribCurYr${sfx}`));
+    const dec = String(val(rd.hsa, `hsaLastMonthRuleStatus${sfx}`) ?? "").toLowerCase();
+    const decemberCoverage = dec === "self" || dec === "family" ? dec : undefined;
+    if (dec && !decemberCoverage && dec !== "none") outOfScope.add(`HSA December coverage "${dec}"`);
+    const changed = val(rd.hsa, `hsaStatusChangeDurYr${sfx}`) === true;
+    const self = num(val(rd.hsa_addtl, `hsaMonthsCoverSelf${sfx}`)), family = num(val(rd.hsa_addtl, `hsaMonthsCoverFamily${sfx}`));
+    if (!contributions && !decemberCoverage && !self && !family) return undefined;
+    return {
+      coverage: decemberCoverage ?? (family >= self && family > 0 ? "family" : "self"),
+      contributions,
+      months: changed || !decemberCoverage ? { self, family } : undefined,
+      decemberCoverage,
+    };
+  };
+  const hsaTp = hsaPerson("TP"), hsaSp = married ? hsaPerson("SP") : undefined;
+  const hsa = hsaTp || hsaSp ? { primary: hsaTp, spouse: hsaSp } : undefined;
+  const gamblingWinnings: GamblingWinnings[] = list(rd, "wg2").map((g) => ({
+    recipient: val(g, "w2g_who_applies_to") === "spouse" ? "spouse" : "primary",
+    payerName: String(val(g, "w2g_payer") ?? ""), payerTin: "",
+    winnings: num(val(g, "w2g_winnings")), federalWithheld: num(val(g, "w2g_fed_wh")),
+  }));
   for (const k of ["tp_dependent", "sp_dependent", "eic_not_allowed", "qualifying_child_of_another"]) {
     if (val(f1040, k) === true) outOfScope.add(`irs1040.${k}`);
   }
@@ -626,6 +705,8 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     dependentCare,
     education,
     marketplace1095As,
+    hsa,
+    gamblingWinnings: gamblingWinnings.length ? gamblingWinnings : undefined,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }
       : undefined,

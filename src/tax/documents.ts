@@ -25,6 +25,7 @@ import { form8949Copies } from "../fieldmaps/capital";
 import { reportedSales } from "../fieldmaps/f1099b";
 import { students1098T } from "../fieldmaps/education";
 import { includedIsoExercises } from "../fieldmaps/amt";
+import { hsaDistributionPeople } from "../fieldmaps/hsa";
 import { computeReturn } from "./compute";
 import { includedW2s } from "./household";
 
@@ -58,6 +59,7 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.form2441) out.push("f2441");
   if (r.form8863) out.push("f8863");
   if (r.form8962) out.push("f8962");
+  if (r.schedule1.hsa?.forms.length) out.push("f8889");
   // Form 6251 is attached when line 7 is more than line 10 (i.e. AMT is owed; no AMT foreign tax credit).
   if (r.form6251.line7 > r.form6251.line10) out.push("f6251");
   if (r.scheduleC.length) out.push("f1040sc");
@@ -102,6 +104,16 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f2441":   return single(formId, t, "Form 2441");
     case "f8962":   return single(formId, t, "Form 8962");
     case "f6251":   return single(formId, t, "Form 6251");
+    case "f8889": {
+      const fs = computeReturn(t).schedule1.hsa?.forms ?? [];
+      if (!getFieldMap("f8889", t.taxYear)) return [];
+      return fs.map((f, i) => ({ index: i + 1, count: fs.length, label: `Form 8889 #${i + 1} (${f.person})`, view: { ...t, document: { source: t, hsaPerson: f.person } } }));
+    }
+    case "f1099sa": {
+      if (!getFieldMap("f1099sa", t.taxYear)) return [];
+      const ps = hsaDistributionPeople(t);
+      return ps.map((p, i) => ({ index: i + 1, count: ps.length, label: `1099-SA #${i + 1} (${p})`, view: { ...t, document: { source: t, hsaPerson: p } } }));
+    }
     case "f3921": {
       if (!getFieldMap("f3921", t.taxYear)) return [];
       const xs = includedIsoExercises(t);
