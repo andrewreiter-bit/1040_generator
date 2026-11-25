@@ -136,7 +136,9 @@ function runYear(cases: ReturnType<typeof loadTy24Cases>, year: number): CaseRes
     if (r && (status === "fail" || status === "lenient" || (opts.verbose && status !== "known-bad"))) {
       for (const d of DETAIL_LINES) {
         const exp = expectedAmounts(c.expectedXml, d.form, d.element);
-        const got = d.pick(r).map((x) => Math.round(x + 1e-6));
+        let got = d.pick(r).map((x) => Math.round(x + 1e-6));
+        // A form block without the element reads as 0; nothing computed means 0 too.
+        if (!got.length && exp.every((x) => x === 0)) got = exp.map(() => 0);
         if (!exp.length && got.every((x) => x === 0)) continue;
         const same = exp.length === got.length && exp.every((e, i) => e === got[i]);
         if (same && !opts.verbose) continue;

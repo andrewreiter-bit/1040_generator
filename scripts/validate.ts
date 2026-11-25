@@ -38,7 +38,7 @@ import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "f1099sa", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -754,6 +754,27 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "8889-16-equals-sch1-8f", round2(sum16), n0(s1("line8f")), "Σ Form 8889 line 16 vs Schedule 1 line 8f");
     tie(2, "8889-17b-equals-sch2-17c", round2(sum17), docs.f1040s2?.length ? n0(s2("line17c")) : 0, "Σ Form 8889 line 17b vs Schedule 2 line 17c");
   }
+  // ── Form 4952 (investment interest): its arithmetic, and its inputs and deduction tied to the return ──
+  if (docs.f4952?.length) {
+    const k = keyed(docs.f4952[0], "f4952");
+    const L = (x: string) => n0(k(x));
+    const sd = keyed(docs.f1040sd?.[0], "f1040sd");
+    const bad: string[] = [];
+    if (!near(L("line3"), round2(L("line1") + L("line2")))) bad.push("3 vs 1 + 2");
+    if (!near(L("line4a"), round2(n0(line("line2b")) + n0(line("line3b"))))) bad.push("4a vs 1040 2b + 3b");
+    if (!near(L("line4b"), n0(line("line3a")))) bad.push("4b vs 1040 3a");
+    if (!near(L("line4c"), Math.max(0, round2(L("line4a") - L("line4b"))))) bad.push("4c");
+    if (!near(L("line4d"), docs.f1040sd?.length ? Math.max(0, n0(sd("line16"))) : 0)) bad.push("4d vs Schedule D 16");
+    if (L("line4e") > L("line4d") + 0.005) bad.push("4e over 4d");
+    if (!near(L("line4f"), round2(L("line4d") - L("line4e")))) bad.push("4f");
+    if (L("line4g") > round2(L("line4b") + L("line4e")) + 0.005) bad.push("4g over 4b + 4e");
+    if (!near(L("line4h"), round2(L("line4c") + L("line4f") + L("line4g")))) bad.push("4h");
+    if (!near(L("line6"), Math.max(0, L("line4h")))) bad.push("6");
+    if (!near(L("line7"), Math.max(0, round2(L("line3") - L("line6"))))) bad.push("7");
+    if (!near(L("line8"), Math.min(L("line3"), L("line6")))) bad.push("8");
+    checks.push({ phase: 2, id: "4952-lines-tie-out", ok: !bad.length, detail: bad.join("; ") || undefined });
+    tie(2, "4952-8-equals-schA-9", L("line8"), n0(keyed(docs.f1040sa?.[0], "f1040sa")("line9")), "Form 4952 line 8 vs Schedule A line 9");
+  }
   if (docs.f1040s3?.length) tie(2, "sch3-8-equals-1040-20", n0(s3("line8")), n0(line("line20")), "Schedule 3 line 8 vs 1040 line 20");
   if (docs.f1040s3?.length) tie(2, "sch3-15-equals-1040-31", n0(s3("line15")), n0(line("line31")), "Schedule 3 line 15 vs 1040 line 31");
   const m59 = keyed(docs.f8959?.[0], "f8959");
@@ -905,7 +926,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

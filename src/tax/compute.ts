@@ -35,6 +35,7 @@ import { Form8959Lines, Form8960Lines, excessSocialSecurity, form8959, form8960 
 import { Rounder, rounderFor, sumWith } from "./rounding";
 import { CapitalResult, computeCapital } from "./capital";
 import { ScheduleALines, scheduleA } from "./itemized";
+import { Form4952Lines, form4952 } from "./investment-interest";
 import { ScheduleELines, scheduleE } from "./rental";
 import { Form8582Lines, form8582 } from "./passive";
 import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
@@ -118,6 +119,8 @@ export interface ReturnLines {
   standardDeductionAmount: number;
   itemizes: boolean;
   scheduleA?: ScheduleALines;
+  /** Form 4952, when the filer itemizes with investment interest. */
+  form4952?: Form4952Lines;
   scheduleE?: ScheduleELines;
   form8582?: Form8582Lines;
   additionalIncome: number;    // 8 (Schedule 1 line 10)
@@ -356,12 +359,21 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const spouseItemizes = t.filingStatus === "MFS" && !!t.spouseItemizes;
   const standardDeductionAmount = spouseItemizes ? 0
     : standardDeduction(t.taxYear, t.filingStatus) + boxes * additionalStandardDeduction(t.taxYear, t.filingStatus);
-  const schA = t.itemized ? scheduleA(t, agi, R, gamblingWinnings) : undefined;
+  // Form 4952: investment interest, deductible on Schedule A line 9 up to net investment income.
+  const f4952All = t.investmentInterest
+    ? form4952(t.investmentInterest, { taxableInterest, ordinaryDividends, qualifiedDividends, scheduleDLine16: capital.scheduleD?.line16 ?? capitalGain, netCapitalGain }, R)
+    : undefined;
+  const schA = t.itemized || f4952All ? scheduleA(t, agi, R, gamblingWinnings, f4952All?.line8 ?? 0) : undefined;
   const legacyItemized = !t.itemized && !t.takesStandardDeduction && t.itemizedDeductionTotal != null ? round2(t.itemizedDeductionTotal) : undefined;
   const itemizedAmount = schA?.line17 ?? legacyItemized ?? 0;
   // The larger of the two, or Schedule A when the filer elects to itemize (line 18) or must.
   const itemizes = itemizedAmount > standardDeductionAmount || (!!schA && (schA.electToItemize || spouseItemizes));
   const deduction = itemizes ? itemizedAmount : standardDeductionAmount;
+  // Form 4952 is filed (and its line 4g election made) only to claim the Schedule A deduction.
+  const f4952 = itemizes ? f4952All : undefined;
+  // Line 4g: elected gain isn't taxed at capital-gain rates (net capital gain first, then dividends).
+  const prefDividends = round2(qualifiedDividends - (f4952?.electedFromDividends ?? 0));
+  const prefGain = round2(netCapitalGain - (f4952?.electedFromGain ?? 0));
   if (itemizes && legacyItemized != null) unsupported.push("itemized deductions given only as a total (no Schedule A detail)");
   if (itemizes && schA?.charityLimitMayApply) {
     unsupported.push("charitable contributions that may exceed an AGI limit (§ 170(b); Pub 526 Worksheet 2)");
@@ -397,8 +409,9 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const taxableIncome = Math.max(0, round2(agi - totalDeductions));
 
   // ── Tax ───────────────────────────────────────────────────────────────────
-  const tax = qualifiedDividends > 0 || netCapitalGain > 0
-    ? qdcgTax(taxableIncome, qualifiedDividends, netCapitalGain, t, R)
+  if (f4952?.line4g && qbi) unsupported.push("Form 4952 line 4g election with a QBI deduction (Form 8995 net capital gain)");
+  const tax = prefDividends > 0 || prefGain > 0
+    ? qdcgTax(taxableIncome, prefDividends, prefGain, t, R)
     : R(taxOnIncome(taxableIncome, t.taxYear, t.filingStatus));
   // Schedule 2 Part I: the excess advance PTC repayment (Form 8962 line 29); AMT isn't modelled.
   const f8962 = form8962(t, agi, socialSecurity, R);
@@ -413,7 +426,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     .map((x) => R(Math.max(0, x.fairMarketValue - x.exercisePrice) * x.shares)));
   const f6251 = form6251(t, {
     agi, totalDeductions, isoAdjustment, seniorDeduction: schedule1A?.line37 ?? 0, itemizes, scheduleALine7: schA?.line7 ?? 0,
-    standardDeduction: standardDeductionAmount, taxableIncome, qualifiedDividends, netCapitalGain,
+    standardDeduction: standardDeductionAmount, taxableIncome, qualifiedDividends: prefDividends, netCapitalGain: prefGain,
     regularTax: tax, excessAptc: excessAdvancePtc, R,
   });
   unsupported.push(...f6251.unsupported);
@@ -447,7 +460,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   // ── Schedule 2 Part II ────────────────────────────────────────────────────
   const f8959 = form8959(t.filingStatus, w2s, scheduleSEs, R);
-  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome);
+  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0);
   const seTax = sum(scheduleSEs.map((s) => s.seTax));
   const earlyDistributionTax = retirement.additionalTax;
   // Line 13 (Schedule 2 instructions): "box 12 of Form W-2 with codes A and B or M and N".
@@ -520,7 +533,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const result: ReturnLines = {
     wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
     capitalGain, netCapitalGain, scheduleDRequired, capital, retirement, socialSecurity, standardDeductionAmount, itemizes,
-    scheduleA: itemizes ? schA : undefined, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
+    scheduleA: itemizes ? schA : undefined, form4952: f4952, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     // Form 8962 is filed only to claim the PTC or reconcile advance payments.
     tax, scheduleTwoPartOne, form6251: f6251, alternativeMinimumTax, excessAdvancePtc, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,

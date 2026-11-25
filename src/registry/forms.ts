@@ -191,6 +191,7 @@ export const FORM_REGISTRY: FormEntry[] = [
     "Credit for Qualified Retirement Savings Contributions (Saver's Credit)",
   ),
   irs("f8889", "Form 8889", "supporting", "Health Savings Accounts (HSAs)"),
+  irs("f4952", "Form 4952", "supporting", "Investment Interest Expense Deduction"),
   irs("f8936", "Form 8936", "supporting", "Clean Vehicle Credits"),
   irs(
     "f8949",

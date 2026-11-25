@@ -64,11 +64,14 @@ export interface Form8960Lines {
   tax: number;                  // 17 → Schedule 2 line 12
 }
 
-/** Form 8960 for interest, dividends, rental income and net capital gain (the investment income the model carries). */
-export function form8960(status: FilingStatus, agi: number, interest: number, dividends: number, capitalGain: number, R: Rounder, rentalIncome = 0): Form8960Lines {
+/**
+ * Form 8960 for interest, dividends, rental income and net capital gain (the investment income the
+ * model carries), less line 9a investment interest (the Form 4952 deduction taken on Schedule A).
+ */
+export function form8960(status: FilingStatus, agi: number, interest: number, dividends: number, capitalGain: number, R: Rounder, rentalIncome = 0, investmentInterest = 0): Form8960Lines {
   const t = NIIT.threshold;
   const threshold = status === "MFJ" || status === "QSS" ? t.joint : status === "MFS" ? t.mfs : t.other;
-  const netInvestmentIncome = Math.max(0, R(interest + dividends + rentalIncome + capitalGain));
+  const netInvestmentIncome = Math.max(0, R(interest + dividends + rentalIncome + capitalGain - investmentInterest));
   const agiOverThreshold = Math.max(0, R(agi - threshold));
   const tax = R(Math.min(netInvestmentIncome, agiOverThreshold) * NIIT.rate);
   return { rentalIncome, netInvestmentIncome, modifiedAgi: agi, threshold, agiOverThreshold, tax };

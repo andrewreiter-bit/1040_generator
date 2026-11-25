@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, ItemizedDeductions, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, IsoExercise, ItemizedDeductions, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { isQualifyingChild } from "../tax/household";
 import { mergeSourceDocuments } from "./ty25-documents";
@@ -110,6 +110,11 @@ export const CHECKED_FORM_LINES: Array<{ form: string; element: string; label: s
   { form: "IRS8889", element: "HSAEmployerContributionAmt", label: "8889 9", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line9) ?? [] },
   { form: "IRS8889", element: "TotalHSAContributionAmt", label: "8889 11", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line11) ?? [] },
   { form: "IRS8889", element: "HSALimitedContributionAmt", label: "8889 12", pick: (r) => r.schedule1.hsa?.forms.map((f) => f.line12) ?? [] },
+  // Form 4952: line 4g changes the tax but not the 1040 lines' inputs, so check it directly.
+  { form: "IRS4952", element: "TotalInvestmentInterestExpAmt", label: "4952 3", pick: (r) => (r.form4952?.required ? [r.form4952.line3] : []) },
+  { form: "IRS4952", element: "InvestmentIncomeElectionAmt", label: "4952 4g", pick: (r) => (r.form4952?.required ? [r.form4952.line4g] : []) },
+  { form: "IRS4952", element: "NetInvestmentIncomeAmt", label: "4952 6", pick: (r) => (r.form4952?.required ? [r.form4952.line6] : []) },
+  { form: "IRS4952", element: "InvestmentInterestExpDeductAmt", label: "4952 8", pick: (r) => (r.form4952?.required ? [r.form4952.line8] : []) },
 ];
 
 /**
@@ -156,7 +161,8 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS1040", element: "TaxablePensionsAmt", label: "1040 5b", pick: (r) => [r.retirement.line5b] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
   { form: "IRS8962", element: "TotalPremiumTaxCreditAmt", label: "8962 24", pick: (r) => (r.form8962 ? [r.form8962.line24] : []) },
-  { form: "IRS1040Schedule2", element: "PremiumTaxCreditTaxLiabAmt", label: "Sch 2 1a", pick: (r) => (r.scheduleTwoPartOne ? [r.scheduleTwoPartOne] : []) },
+  { form: "IRS1040Schedule2", element: "PremiumTaxCreditTaxLiabAmt", label: "Sch 2 1a", pick: (r) => (r.excessAdvancePtc ? [r.excessAdvancePtc] : []) },
+  { form: "IRS1040Schedule2", element: "AlternativeMinimumTaxAmt", label: "Sch 2 AMT", pick: (r) => (r.alternativeMinimumTax ? [r.alternativeMinimumTax] : []) },
   { form: "IRS8880", element: "CrQualifiedRetirementSavAmt", label: "8880 12", pick: (r) => (r.form8880 ? [r.form8880.line12] : []) },
   { form: "IRS8995A", element: "TotalQBIComponentAmt", label: "8995-A 16", pick: (r) => (r.form8995A ? [r.form8995A.line16] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
@@ -164,6 +170,8 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS1040ScheduleD", element: "NetSTAndLTCapitalGainOrLossAmt", label: "Sch D 16", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line16] : []) },
   { form: "IRS1040ScheduleA", element: "StateAndLocalTaxAmt", label: "Sch A 5a", pick: (r) => (r.scheduleA ? [r.scheduleA.line5a] : []) },
   { form: "IRS1040ScheduleA", element: "StateAndLocalTaxLimitationAmt", label: "Sch A 5e", pick: (r) => (r.scheduleA ? [r.scheduleA.line5e] : []) },
+  { form: "IRS1040ScheduleA", element: "RptHomeMortgIntAndPointsAmt", label: "Sch A 8a", pick: (r) => (r.scheduleA ? [r.scheduleA.line8a] : []) },
+  { form: "IRS1040ScheduleA", element: "InvestmentInterestAmt", label: "Sch A 9", pick: (r) => (r.scheduleA ? [r.scheduleA.line9] : []) },
   { form: "IRS1040ScheduleA", element: "GiftsByCashOrCheckAmt", label: "Sch A 11", pick: (r) => (r.scheduleA ? [r.scheduleA.line11] : []) },
   { form: "IRS1040ScheduleA", element: "OtherThanByCashOrCheckAmt", label: "Sch A 12", pick: (r) => (r.scheduleA ? [r.scheduleA.line12] : []) },
   { form: "IRS1040ScheduleA", element: "CarryoverFromPriorYearAmt", label: "Sch A 13", pick: (r) => (r.scheduleA ? [r.scheduleA.line13] : []) },
@@ -261,6 +269,10 @@ const SUPPORTED_PATHS: RegExp[] = [
   // TY25 Schedule A. deduction_type is the preparer's note of the result; the override decides.
   /^deduction_type$/, /^deduction_override$/, /^mfs_deduction$/,  // values checked in toTaxpayer
   /^ty25_unplaced_state_local_income_tax$/,                         // checked when itemizing
+  // TY25 Form 1098 (read from the PDFs), Form 4952 and Form 6251 ISO answers.
+  /^f1098\[\]\.(mortgage_interest|outstanding_principal|points)$/,
+  /^f4952\.(currentYearExpenses|COfromBefore|qualDivLineElectedInvest)$/,
+  /^f6251\.stockOption$/,
   /^scha_tax\.(stateTaxOrSalesTax|salesTaxesPaid|taxRE|taxPP)$/,
   /^scha_gft\.(cash60|cash30|nonCash50|nonCash30|contrib30CapGain)(CO)?$/, /^scha_gft\.noncash50CO$/,
   /^med_exp\.(medExpDrDentist|medExpPrescYesSCHA)(TP|SP)$/,
@@ -680,7 +692,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   if (mfsDeduction !== undefined && !["spouse_did_not_file", "spouse_itemized", "spouse_standard"].includes(String(mfsDeduction))) outOfScope.add(`mfs_deduction=${mfsDeduction}`);
   const tax = rd.scha_tax, gft = rd.scha_gft, med = rd.med_exp, oth = rd.scha_oth;
   let itemized: ItemizedDeductions | undefined;
-  if (override !== undefined || tax || gft || med || oth) {
+  if (override !== undefined || tax || gft || med || oth || list(rd, "f1098").length || rd.f4952) {
     const choice = val(tax, "stateTaxOrSalesTax");
     if (choice !== undefined && choice !== "L" && choice !== "G") outOfScope.add(`scha_tax.stateTaxOrSalesTax=${choice}`);
     // Line 16: only gambling losses are modelled.
@@ -691,6 +703,12 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       if (/^gambling losses$/i.test(String(type ?? ""))) gamblingLosses += amt;
       else outOfScope.add(`Schedule A line 16 "${type}"`);
     }
+    // Form 1098: interest and points reported on it (line 8a); a loan over the § 163(h)(3)
+    // limit ($750,000, $375,000 MFS) needs the Pub 936 worksheet.
+    const f1098s = list(rd, "f1098");
+    const limit = status === "MFS" ? 375000 : 750000;
+    if (f1098s.reduce((a: number, x) => a + num(val(x, "outstanding_principal")), 0) > limit) outOfScope.add("home mortgage over the § 163(h)(3) limit (Pub 936)");
+    const mortgage = f1098s.reduce((a: number, x) => a + num(val(x, "mortgage_interest")) + num(val(x, "points")), 0);
     const carry = ["cash60CO", "cash30CO", "nonCash30CO", "noncash50CO", "contrib30CapGainCO"].reduce((a, k) => a + num(val(gft, k)), 0);
     itemized = {
       medicalExpenses: ["medExpDrDentistTP", "medExpDrDentistSP", "medExpPrescYesSCHATP", "medExpPrescYesSCHASP"].reduce((a, k) => a + num(val(med, k)), 0) || undefined,
@@ -698,6 +716,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       stateLocalTax: choice === "G" ? { kind: "sales", amount: num(val(tax, "salesTaxesPaid")) } : undefined,
       realEstateTax: num(val(tax, "taxRE")) || undefined,
       personalPropertyTax: num(val(tax, "taxPP")) || undefined,
+      mortgageInterest1098: mortgage || undefined,
       charityByLimit: {
         cash60: num(val(gft, "cash60")), cash30: num(val(gft, "cash30")), nonCash50: num(val(gft, "nonCash50")),
         nonCash30: num(val(gft, "nonCash30")), capitalGain30: num(val(gft, "contrib30CapGain")),
@@ -712,6 +731,17 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   if (itemized && unplacedTax && itemized.stateLocalTax?.kind !== "sales") {
     postChecks.push((r) => (r.itemizes ? `Schedule A line 5a missing $${unplacedTax} of local income tax or 1099 state withholding` : undefined));
   }
+  // Form 4952 (investment interest) and Form 6251 line 2i (ISO bargain element, as one exercise).
+  const f4952In = rd.f4952;
+  const investmentInterest = num(val(f4952In, "currentYearExpenses")) || num(val(f4952In, "COfromBefore"))
+    ? { paid: num(val(f4952In, "currentYearExpenses")), priorYearDisallowed: num(val(f4952In, "COfromBefore")) || undefined,
+        electedQdcg: num(val(f4952In, "qualDivLineElectedInvest")) || undefined }
+    : undefined;
+  const isoSpread = num(val(rd.f6251, "stockOption"));
+  const isoExercises: IsoExercise[] | undefined = isoSpread ? [{
+    corporation: { name: "", street: "", city: "", ein: "" }, dateGranted: "", dateExercised: "",
+    exercisePrice: 0, fairMarketValue: isoSpread, shares: 1,
+  }] : undefined;
   // Living apart / legal separation changes only the Social Security base amount, the IRA
   // phase-out range and EIC for a separated spouse; none of those may apply.
   if (["legallySeparated", "livedApartFromSpouse"].some((k) => val(rd.basic3, k) === true)) {
@@ -768,6 +798,8 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     education,
     marketplace1095As,
     hsa,
+    investmentInterest,
+    isoExercises,
     gamblingWinnings: gamblingWinnings.length ? gamblingWinnings : undefined,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }
