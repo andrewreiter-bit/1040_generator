@@ -52,6 +52,8 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.additionalDeductions > 0) out.push("f1040s1a");
   if (r.schedule2.required) out.push("f1040s2");
   if (r.schedule3.required) out.push("f1040s3");
+  if (r.form8880) out.push("f8880");
+  if (r.form2441) out.push("f2441");
   if (r.scheduleC.length) out.push("f1040sc");
   if (r.scheduleSE.some((s) => !s.belowMinimum)) out.push("f1040sse");
   if (r.form8995 && !r.form8995.overThreshold) out.push("f8995");
@@ -90,6 +92,8 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f1040sa": return single(formId, t, "Schedule A");
     case "f1040se": return single(formId, t, "Schedule E");
     case "f8582":   return single(formId, t, "Form 8582");
+    case "f8880":   return single(formId, t, "Form 8880");
+    case "f2441":   return single(formId, t, "Form 2441");
     case "f1099b": {
       if (!getFieldMap("f1099b", t.taxYear)) return [];
       const sales = reportedSales(t);

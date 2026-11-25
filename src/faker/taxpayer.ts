@@ -41,9 +41,10 @@ export interface W2Record {
   /** Whose W-2 this is. Omitted = primary taxpayer. A spouse W-2 appears only on MFJ returns. */
   employee?: "primary" | "spouse";
   /**
-   * Box 12 entries that change the return: A/B (uncollected Social Security / Medicare tax
-   * on tips) and M/N (the same on group-term life insurance), which go to Schedule 2 line 13.
-   * The profiles don't draw these (the W-2 map leaves box 12 blank); the answer key does.
+   * Box 12 entries that change the return: elective deferrals (D, E, F, G, H, S, AA, BB, EE;
+   * Form 8880 line 2), and A/B (uncollected Social Security / Medicare tax on tips) and M/N
+   * (the same on group-term life insurance), which go to Schedule 2 line 13. Profiles draw
+   * code D deferrals; A/B/M/N come only from the answer key.
    */
   box12?: Array<{ code: string; amount: number }>;
 }
@@ -260,6 +261,28 @@ export interface Retirement1099R {
   statePayerNumber?: string;
 }
 
+/** A care provider for Form 2441 Part I. */
+export interface CareProvider {
+  name: string;
+  street: string;
+  /** "City, ST ZIP". */
+  city: string;
+  /** SSN for an individual, EIN for a daycare center. */
+  tin: string;
+  /** Household employee (e.g. a nanny): Schedule H territory, not modelled. Omitted = no. */
+  householdEmployee?: boolean;
+  amountPaid: number;
+}
+
+/** Child and dependent care (Form 2441). */
+export interface DependentCare {
+  providers: CareProvider[];
+  /** Qualified expenses incurred and paid this year, per dependent (index into `dependents`). */
+  expenses: Array<{ dependentIndex: number; amount: number }>;
+  /** Prior-year expenses paid this year (Form 2441 line 9b / Worksheet A; not modelled). */
+  priorYearExpensesPaid?: number;
+}
+
 export type FilingStatus = "Single" | "MFJ" | "MFS" | "HOH" | "QSS";
 
 /**
@@ -336,6 +359,12 @@ export interface FakeTaxpayer {
   socialSecurityBenefits: number | null;
 
   unemployment1099Gs?: Unemployment1099G[];
+  /** Child and dependent care expenses and providers (Form 2441). */
+  dependentCare?: DependentCare;
+  /** Roth IRA contributions for the year, per person (Form 8880 line 1; not deductible). */
+  rothIraContributions?: { primary?: number; spouse?: number };
+  /** Full-time student for some part of 5 months of the year (no Saver's credit for that person). */
+  fullTimeStudent?: { primary?: boolean; spouse?: boolean };
   /** Alaska Permanent Fund dividends received (Schedule 1 line 8g), per person. */
   alaskaPermanentFundDividends?: { primary?: number; spouse?: number };
   /** Pension, annuity and IRA distributions (Form 1040 lines 4a–5b). */

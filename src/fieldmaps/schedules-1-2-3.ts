@@ -120,10 +120,10 @@ function schedule2(taxYear: number): FieldMap {
   return build();
 }
 
-const S3: Record<number, { line7: string; line8: string; line11: string; line14: string; line15: string }> = {
-  2023: { line7: "P1.f1_25", line8: "P1.f1_26", line11: "P2.f2_03", line14: "P2.f2_16", line15: "P2.f2_17" },
-  2024: { line7: "P1.f1_25", line8: "P1.f1_26", line11: "P1.f1_29", line14: "P1.f1_38", line15: "P1.f1_39" },
-  2025: { line7: "P1.f1_24", line8: "P1.f1_25", line11: "P1.f1_28", line14: "P1.f1_36", line15: "P1.f1_37" },
+const S3: Record<number, { line2: string; line4: string; line7: string; line8: string; line11: string; line14: string; line15: string }> = {
+  2023: { line2: "P1.f1_04", line4: "P1.f1_06", line7: "P1.f1_25", line8: "P1.f1_26", line11: "P2.f2_03", line14: "P2.f2_16", line15: "P2.f2_17" },
+  2024: { line2: "P1.f1_04", line4: "P1.f1_06", line7: "P1.f1_25", line8: "P1.f1_26", line11: "P1.f1_29", line14: "P1.f1_38", line15: "P1.f1_39" },
+  2025: { line2: "P1.f1_04", line4: "P1.f1_06", line7: "P1.f1_24", line8: "P1.f1_25", line11: "P1.f1_28", line14: "P1.f1_36", line15: "P1.f1_37" },
 };
 
 function schedule3(taxYear: number): FieldMap {
@@ -132,6 +132,8 @@ function schedule3(taxYear: number): FieldMap {
   const { add, build } = mapBuilder("f1040s3", taxYear);
   add(F("P1.f1_01"), "names", names);
   add(F("P1.f1_02"), "ssn", ssn);
+  add(F(L.line2), "line2", (x) => moneyOrBlank(x.schedule3.dependentCareCredit));
+  add(F(L.line4), "line4", (x) => moneyOrBlank(x.schedule3.saversCredit));
   add(F(L.line7), "line7", () => BLANK);
   add(F(L.line8), "line8", (x) => moneyOrBlank(x.scheduleThreeCredits));
   add(F(L.line11), "line11", (x) => moneyOrBlank(x.schedule3.excessSocialSecurity));

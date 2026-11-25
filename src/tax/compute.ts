@@ -39,6 +39,8 @@ import { ScheduleELines, scheduleE } from "./rental";
 import { Form8582Lines, form8582 } from "./passive";
 import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
 import { RetirementLines, retirementDistributions } from "./retirement";
+import { Form8880Lines, form8880 } from "./savers-credit";
+import { Form2441Lines, form2441 } from "./dependent-care";
 
 export interface Schedule1Lines {
   businessIncome: number;      // 3
@@ -71,6 +73,9 @@ export interface Schedule2Lines {
 }
 
 export interface Schedule3Lines {
+  dependentCareCredit: number;  // 2 (Form 2441 line 11)
+  saversCredit: number;         // 4 (Form 8880 line 12)
+  nonrefundableCredits: number; // 8 → 1040 line 20
   excessSocialSecurity: number; // 11
   otherPayments: number;        // 15 → 1040 line 31
   required: boolean;
@@ -117,6 +122,10 @@ export interface ReturnLines {
   taxBeforeCredits: number;    // 18
   childAndOtherDependentCredit: number; // 19
   scheduleThreeCredits: number;          // 20
+  /** Form 2441 (child and dependent care credit), when the return claims it. */
+  form2441?: Form2441Lines;
+  /** Form 8880 (Saver's credit), when the return claims it. */
+  form8880?: Form8880Lines;
   totalCredits: number;        // 21
   taxAfterCredits: number;     // 22
   otherTaxes: number;          // 23 (Schedule 2 line 21)
@@ -358,8 +367,17 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const threshold = t.filingStatus === "MFJ" ? CTC_PHASEOUT_THRESHOLD.joint : CTC_PHASEOUT_THRESHOLD.other;
   const reduction = agi > threshold ? Math.ceil((agi - threshold) / 1000) * 50 : 0;
   const creditAfterPhaseout = Math.max(0, maxCredit - reduction);
-  const childAndOtherDependentCredit = Math.min(creditAfterPhaseout, taxBeforeCredits);
-  const scheduleThreeCredits = 0;
+  // Credit order: Form 2441 (Schedule 3 line 2) is limited by line 18; Form 8880 (line 4) by
+  // line 18 less Schedule 3 lines 1–3; Schedule 8812 Credit Limit Worksheet A then takes both
+  // off line 18 before the child tax credit.
+  const f2441 = form2441(t, w2s, scheduleSEs, agi, taxBeforeCredits, R);
+  if (f2441) unsupported.push(...f2441.unsupported);
+  const dependentCareCredit = f2441?.line11 ?? 0;
+  const f8880 = form8880(t, w2s, retirement.records, agi, Math.max(0, round2(taxBeforeCredits - dependentCareCredit)), R);
+  const saversCredit = f8880.line12;
+  const ctcTaxLimit = Math.max(0, round2(taxBeforeCredits - dependentCareCredit - saversCredit));
+  const childAndOtherDependentCredit = Math.min(creditAfterPhaseout, ctcTaxLimit);
+  const scheduleThreeCredits = round2(dependentCareCredit + saversCredit);
   const totalCredits = round2(childAndOtherDependentCredit + scheduleThreeCredits);
   const taxAfterCredits = Math.max(0, round2(taxBeforeCredits - totalCredits));
 
@@ -392,7 +410,10 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const totalWithholding = round2(w2Withholding + form1099Withholding + otherWithholding);
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
   const excessSs = excessSocialSecurity(t, w2s, R).total;
-  const schedule3: Schedule3Lines = { excessSocialSecurity: excessSs, otherPayments: excessSs, required: excessSs > 0 };
+  const schedule3: Schedule3Lines = {
+    dependentCareCredit, saversCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs, otherPayments: excessSs,
+    required: excessSs > 0 || scheduleThreeCredits > 0,
+  };
   const scheduleThreePayments = schedule3.otherPayments;
 
   // ── Earned income credit (line 27) ────────────────────────────────────────
@@ -419,7 +440,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   });
   const schedule8812 = {
     ctcChildren: nCtc, otherDependents: nOdc, maxCredit, threshold, reduction, afterPhaseout: creditAfterPhaseout,
-    taxLimit: taxBeforeCredits, credit: childAndOtherDependentCredit, partII,
+    taxLimit: ctcTaxLimit, credit: childAndOtherDependentCredit, partII,
     required: maxCredit > 0,
   };
   const refundableCredits = round2(eic.credit + partII.credit + scheduleThreePayments);
@@ -434,7 +455,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     scheduleA: itemizes ? schA : undefined, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     tax, scheduleTwoPartOne, taxBeforeCredits, childAndOtherDependentCredit,
-    scheduleThreeCredits, totalCredits, taxAfterCredits, otherTaxes, totalTax,
+    scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
     earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit,
     scheduleThreePayments, refundableCredits, totalPayments, overpaid, refund: overpaid, amountOwed,
