@@ -190,6 +190,8 @@ export const SENIOR_DEDUCTION = { amount: 6000, phaseoutRate: 0.06, threshold: {
 
 export const EDUCATOR_EXPENSE_LIMIT = 300;
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
+/** § 199A(b)(3)(B) phase-in range above the threshold, 2018–2025 (OBBBA widens it from 2026). */
+export const QBI_PHASE_IN_RANGE = { joint: 100000, other: 50000 };
 /** § 199A deduction rate. */
 export const QBI_RATE = 0.20;
 /** Simplified home-office method (Rev. Proc. 2013-13): $5 per square foot, up to 300 square feet. */

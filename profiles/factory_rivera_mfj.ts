@@ -8,7 +8,7 @@ import {
   FilingStatus,
 } from "./taxpayer";
 import { ssWageBase } from "./tax-year";
-import { buildScheduleC } from "./schedule-c";
+import { addBusinessPayrollAndProperty, buildScheduleC } from "./schedule-c";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -242,6 +242,8 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   if (taxpayer.rentals?.length && faker.datatype.boolean({ probability: 0.25 })) {
     taxpayer.rentalIncome = makeRentalLoss(faker, taxpayer.rentals[0]);
   }
+  // Payroll and qualified property for Form 8995-A (last draws, so nothing earlier moves).
+  if (taxpayer.scheduleCs?.length) addBusinessPayrollAndProperty(faker, taxpayer.scheduleCs[0]);
   return taxpayer;
 }
 

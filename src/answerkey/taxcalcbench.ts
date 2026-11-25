@@ -111,6 +111,7 @@ export const DETAIL_LINES: Array<{ form: string; element: string; label: string;
   { form: "IRS8959", element: "AddnlMedicareTaxWithholdingAmt", label: "8959 24", pick: (r) => [r.form8959.additionalWithheld] },
   { form: "IRS1040Schedule3", element: "ExcessSocSecAndTier1RRTATaxAmt", label: "Sch 3 11", pick: (r) => [r.schedule3.excessSocialSecurity] },
   { form: "IRS1040", element: "QualifiedBusinessIncomeDedAmt", label: "1040 13", pick: (r) => [r.qbiDeduction] },
+  { form: "IRS8995A", element: "TotalQBIComponentAmt", label: "8995-A 16", pick: (r) => (r.form8995A ? [r.form8995A.line16] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTCapitalGainOrLossAmt", label: "Sch D 7", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line7] : []) },
   { form: "IRS1040ScheduleD", element: "NetLTCapitalGainOrLossAmt", label: "Sch D 15", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line15] : []) },
   { form: "IRS1040ScheduleD", element: "NetSTAndLTCapitalGainOrLossAmt", label: "Sch D 16", pick: (r) => (r.capital.scheduleD ? [r.capital.scheduleD.line16] : []) },
@@ -384,6 +385,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       homeOfficeSqFt: num(val(c, "business_home_area")) || undefined,
       homeTotalSqFt: num(val(c, "total_home_area")) || undefined,
       healthInsurancePremiums: num(val(c, "se_health_insurance")) || undefined,
+      sstb: val(c, "specified_service") === true,
+      w2WagesPaid: num(val(c, "wages_paid")) || undefined,
+      ubia: num(val(c, "ubia_qualified_property")) || undefined,
     };
   });
   const schedule1 = rd.irs1040_schedule1;

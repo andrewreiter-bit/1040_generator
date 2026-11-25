@@ -37,7 +37,7 @@ import { includedW2s, qualifiesForChildTaxCredit } from "../src/tax/household";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -441,6 +441,28 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   }
   const m60 = keyed(docs.f8960?.[0], "f8960");
   if (docs.f8960?.length) tie(2, "8960-17-equals-sch2-12", n0(m60("line17")), n0(s2("line12")), "Form 8960 line 17 vs Schedule 2 line 12");
+  const qa = keyed(docs.f8995a?.[0], "f8995a");
+  if (docs.f8995a?.length) {
+    tie(2, "8995a-39-equals-1040-13", n0(qa("line39")), n0(line("line13")), "Form 8995-A line 39 vs 1040 line 13");
+    const colBad = ["A", "B", "C"].filter((k) => {
+      if (!qa(`line2.${k}`)) return false;
+      const l3 = n0(qa(`line3.${k}`)), l10 = n0(qa(`line10.${k}`)), l11 = n0(qa(`line11.${k}`)), l12 = n0(qa(`line12.${k}`));
+      return !near(l11, Math.min(l3, l10)) || !near(n0(qa(`line13.${k}`)), Math.max(l11, l12));
+    });
+    checks.push({ phase: 2, id: "8995a-columns-tie-out", ok: !colBad.length, detail: colBad.length ? `column(s) ${colBad.join(", ")}` : undefined });
+    checks.push({ phase: 2, id: "8995a-businesses-fit", ok: r.scheduleC.length <= 3, detail: `${r.scheduleC.length} business(es); Form 8995-A has 3 columns` });
+    const sa = keyed(docs.f8995aa?.[0], "f8995aa");
+    if (docs.f8995aa?.length) {
+      const sstbCols = r.form8995A!.businesses.map((b, i) => ({ b, k: ["A", "B", "C"][i] })).filter((x) => x.b.sstb);
+      const bad = sstbCols.filter((x, j) => !near(n0(sa(`line11.${["A", "B", "C"][j]}`)), r.form8995A!.scheduleC ? x.b.qbi : n0(qa(`line2.${x.k}`))));
+      checks.push({ phase: 2, id: "8995aa-11-feeds-8995a-2", ok: !bad.length, detail: bad.length ? bad.map((x) => x.k).join(", ") : undefined });
+    }
+    const sc = keyed(docs.f8995ac?.[0], "f8995ac");
+    if (docs.f8995ac?.length) {
+      const bad = ["A", "B", "C"].filter((k, i) => qa(`line2.${k}`) && !near(n0(sc(`line1.${i + 1}.c`)), n0(qa(`line2.${k}`))));
+      checks.push({ phase: 2, id: "8995ac-c-feeds-8995a-2", ok: !bad.length, detail: bad.length ? bad.join(", ") : undefined });
+    }
+  }
   const q = keyed(docs.f8995?.[0], "f8995");
   if (docs.f8995?.length) {
     tie(2, "8995-15-equals-1040-13", n0(q("line15")), n0(line("line13")), "Form 8995 line 15 vs 1040 line 13");
@@ -557,7 +579,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8959", "f8960", "f8582", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

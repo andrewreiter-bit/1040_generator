@@ -100,6 +100,8 @@ export const FORM_REGISTRY: FormEntry[] = [
   ),
   irs("f1040sei", "Schedule EIC", "schedule", "Earned Income Credit"),
   irs("f1040s1a", "Schedule 1-A", "schedule", "Additional Deductions (2025–2028)"),
+  irs("f8995aa", "Schedule A (Form 8995-A)", "supporting", "Specified Service Trades or Businesses"),
+  irs("f8995ac", "Schedule C (Form 8995-A)", "supporting", "Loss Netting and Carryforward"),
 
   // ═══════════════════════════════════════════════════════════════════════════
   // B. INDIVIDUAL SUPPORTING FORMS

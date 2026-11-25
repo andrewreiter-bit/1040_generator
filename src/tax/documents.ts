@@ -54,6 +54,9 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.scheduleC.length) out.push("f1040sc");
   if (r.scheduleSE.some((s) => !s.belowMinimum)) out.push("f1040sse");
   if (r.form8995 && !r.form8995.overThreshold) out.push("f8995");
+  if (r.form8995A) out.push("f8995a");
+  if (r.form8995A?.scheduleANeeded) out.push("f8995aa");
+  if (r.form8995A?.scheduleC) out.push("f8995ac");
   if (r.form8959.required) out.push("f8959");
   if (r.form8960.tax > 0) out.push("f8960");
   // Schedule 8812 backs line 19 and line 28; Schedule EIC lists the children behind line 27.
@@ -79,6 +82,9 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f1040s3": return single(formId, t, "Schedule 3");
     case "f1040s1a": return single(formId, t, "Schedule 1-A");
     case "f8995":   return single(formId, t, "Form 8995");
+    case "f8995a":  return single(formId, t, "Form 8995-A");
+    case "f8995aa": return single(formId, t, "Schedule A (Form 8995-A)");
+    case "f8995ac": return single(formId, t, "Schedule C (Form 8995-A)");
     case "f1040sd": return single(formId, t, "Schedule D");
     case "f1040sa": return single(formId, t, "Schedule A");
     case "f1040se": return single(formId, t, "Schedule E");

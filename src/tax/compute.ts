@@ -28,8 +28,8 @@ import {
 import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount } from "./household";
 import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
 import {
-  BusinessDeductions, Form8995Lines, ScheduleCLines, ScheduleSELines,
-  businessDeductions, form8995, includedScheduleCs, scheduleC, scheduleSE,
+  BusinessDeductions, Form8995ALines, Form8995Lines, ScheduleCLines, ScheduleSELines,
+  businessDeductions, form8995, form8995A, includedScheduleCs, scheduleC, scheduleSE,
 } from "./business";
 import { Form8959Lines, Form8960Lines, excessSocialSecurity, form8959, form8960 } from "./payroll";
 import { Rounder, rounderFor, sumWith } from "./rounding";
@@ -133,6 +133,8 @@ export interface ReturnLines {
   form8959: Form8959Lines;
   form8960: Form8960Lines;
   form8995?: Form8995Lines;
+  /** Above the § 199A threshold: Form 8995-A (with Schedules A / C as needed). */
+  form8995A?: Form8995ALines;
   /** Schedule 8812 Part I (lines 4–14). */
   schedule8812: {
     ctcChildren: number; otherDependents: number; maxCredit: number; threshold: number;
@@ -310,9 +312,12 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   if (scheduleCs.length || t.priorYearQbiLoss) {
     // Form 8995 line 11: taxable income before the QBI deduction (2025: after line 13b).
     qbi = form8995(bizDed.qbiByBusiness, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R);
-    if (qbi.overThreshold && qbi.netQbi > 0) unsupported.push("QBI deduction above the § 199A threshold (Form 8995-A)");
   }
-  const qbiDeduction = qbi && !qbi.overThreshold ? qbi.deduction : 0;
+  // Above the threshold: Form 8995-A (W-2 wage / UBIA limit, SSTB phase-out, loss netting).
+  const f8995a = qbi?.overThreshold
+    ? form8995A(scheduleCs, bizDed.qbiByBusiness, qbi.taxableIncomeBeforeQbi, qbi.netCapitalGain, t, R)
+    : undefined;
+  const qbiDeduction = f8995a ? f8995a.line39 : qbi ? qbi.deduction : 0;
   const totalDeductions = round2(deduction + qbiDeduction + additionalDeductions);
   const taxableIncome = Math.max(0, round2(agi - totalDeductions));
 
@@ -407,7 +412,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit,
     scheduleThreePayments, refundableCredits, totalPayments, overpaid, refund: overpaid, amountOwed,
     scheduleC: scheduleCs, scheduleSE: scheduleSEs, businessDeductions: bizDed,
-    schedule1, schedule2, schedule3, form8959: f8959, form8960: f8960, form8995: qbi,
+    schedule1, schedule2, schedule3, form8959: f8959, form8960: f8960, form8995: qbi, form8995A: f8995a,
     schedule8812, eic,
     unsupported,
   };

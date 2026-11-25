@@ -114,6 +114,12 @@ export interface ScheduleCBusiness {
   paid1099Payments?: boolean;
   /** Self-employed health insurance premiums for this business (Schedule 1 line 17). */
   healthInsurancePremiums?: number;
+  /** § 199A: specified service trade or business (health, law, accounting, consulting, …). */
+  sstb?: boolean;
+  /** § 199A W-2 wages paid to employees (Form 8995-A line 4). */
+  w2WagesPaid?: number;
+  /** § 199A unadjusted basis immediately after acquisition of qualified property (line 7). */
+  ubia?: number;
 }
 
 /**

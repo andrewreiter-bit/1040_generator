@@ -5,7 +5,7 @@
  * Every line goes through the return's Rounder (cents or whole dollars).
  */
 import { FakeTaxpayer, ScheduleCBusiness, ScheduleCExpenses, W2Record } from "../faker/taxpayer";
-import { QBI_RATE, SE_TAX, SIMPLIFIED_HOME_OFFICE, yearConstants } from "../config/tax-year";
+import { QBI_PHASE_IN_RANGE, QBI_RATE, SE_TAX, SIMPLIFIED_HOME_OFFICE, yearConstants } from "../config/tax-year";
 import { Rounder, sumWith } from "./rounding";
 
 export type Person = "primary" | "spouse";
@@ -179,5 +179,116 @@ export function form8995(
     taxableIncomeBeforeQbi, netCapitalGain, reducedTaxableIncome, incomeLimitation, deduction,
     lossCarryforward: Math.min(0, combined),
     overThreshold: taxableIncomeBeforeQbi > threshold,
+  };
+}
+
+// ── Form 8995-A (taxable income above the § 199A threshold) ─────────────────
+
+export interface Form8995ABusiness {
+  index: number;               // into the Schedule C list
+  sstb: boolean;
+  /** Schedule A: applicable percentage (1 below the range, 0 above it) — SSTBs only. */
+  applicablePct: number;
+  /** Before the applicable percentage (Schedule A lines 2–4). */
+  rawQbi: number; rawW2: number; rawUbia: number;
+  qbi: number;                 // Schedule A line 11 / Schedule C (a)
+  lossNetting: number;         // Schedule C (b), ≤ 0
+  line2: number;               // adjusted QBI (Schedule C (c))
+  line3: number;
+  line4: number; line5: number; line6: number; line7: number; line8: number; line9: number; line10: number; line11: number;
+  /** Part III (only inside the phase-in range when line 10 < line 3). */
+  partIII?: { line17: number; line18: number; line19: number; line20: number; line21: number; line22: number; line23: number; line24: number; line25: number; line26: number };
+  line12: number;
+  line13: number;
+  line15: number;
+}
+
+export interface Form8995ALines {
+  taxableIncomeBeforeQbi: number;
+  threshold: number;
+  range: number;
+  businesses: Form8995ABusiness[];
+  /** Schedule C (loss netting), when any business has a loss or there's a carryforward. */
+  scheduleC?: { line2: number; line3: number; line4: number; line5: number; line6: number };
+  /** Schedule A is needed: an SSTB inside the phase-in range. */
+  scheduleANeeded: boolean;
+  line16: number; line27: number; line32: number; line33: number; line34: number; line35: number;
+  line36: number; line37: number; line39: number;
+  lossCarryforward: number;    // ≤ 0
+}
+
+/**
+ * Form 8995-A with Schedules A (SSTBs) and C (loss netting), 2023–2025 layout.
+ * No REIT/PTP income, aggregation (Schedule B) or cooperative patronage (Schedule D).
+ */
+export function form8995A(
+  cs: ScheduleCLines[], qbiByBusiness: number[], taxableIncomeBeforeQbi: number, netCapitalGain: number,
+  t: FakeTaxpayer, R: Rounder,
+): Form8995ALines {
+  const sum = (xs: number[]) => sumWith(R, xs);
+  const joint = t.filingStatus === "MFJ";
+  const y = yearConstants(t.taxYear).qbiThreshold;
+  const threshold = joint ? y.joint : y.other;
+  const range = joint ? QBI_PHASE_IN_RANGE.joint : QBI_PHASE_IN_RANGE.other;
+  const ti = R(taxableIncomeBeforeQbi);
+  const over = Math.max(0, ti - threshold);
+  const inRange = ti > threshold && ti < threshold + range;
+  const pctSstb = ti <= threshold ? 1 : ti >= threshold + range ? 0 : 1 - over / range;
+
+  // Schedule A: SSTB amounts at the applicable percentage.
+  const base = cs.map((c, i) => {
+    const sstb = !!c.business.sstb;
+    const pct = sstb ? pctSstb : 1;
+    return {
+      index: i, sstb, applicablePct: pct,
+      rawQbi: R(qbiByBusiness[i]), rawW2: R(c.business.w2WagesPaid ?? 0), rawUbia: R(c.business.ubia ?? 0),
+      qbi: R(qbiByBusiness[i] * pct),
+      w2: R((c.business.w2WagesPaid ?? 0) * pct),
+      ubia: R((c.business.ubia ?? 0) * pct),
+    };
+  });
+
+  // Schedule C: net losses (and any carryforward) against the businesses with income, pro rata.
+  const carry = -R(t.priorYearQbiLoss ?? 0);
+  const line3 = sum([...base.filter((b) => b.qbi < 0).map((b) => b.qbi), carry]);
+  const line4 = sum(base.filter((b) => b.qbi > 0).map((b) => b.qbi));
+  const netted = Math.min(-line3, line4);
+  const needC = line3 < 0;
+  const netting = base.map((b) => (b.qbi > 0 && line4 > 0 ? -R(netted * (b.qbi / line4)) : 0));
+
+  const businesses = base.map((b, i): Form8995ABusiness => {
+    const line2 = Math.max(0, R(b.qbi + netting[i]));
+    const l3 = R(line2 * QBI_RATE);
+    const line4w = b.w2, line5 = R(line4w * 0.5), line6 = R(line4w * 0.25);
+    const line7 = b.ubia, line8 = R(line7 * 0.025), line9 = R(line6 + line8);
+    const line10 = Math.max(line5, line9), line11 = Math.min(l3, line10);
+    let partIII: Form8995ABusiness["partIII"];
+    let line12 = 0;
+    if (inRange && line10 < l3) {
+      const line19 = R(l3 - line10);
+      const line24 = over / range;
+      const line25 = R(line19 * line24);
+      const line26 = R(l3 - line25);
+      partIII = { line17: l3, line18: line10, line19, line20: ti, line21: threshold, line22: R(over), line23: range, line24, line25, line26 };
+      line12 = line26;
+    }
+    const line13 = ti <= threshold ? l3 : Math.max(line11, line12);
+    return {
+      index: b.index, sstb: b.sstb, applicablePct: b.applicablePct, rawQbi: b.rawQbi, rawW2: b.rawW2, rawUbia: b.rawUbia, qbi: b.qbi, lossNetting: netting[i], line2, line3: l3,
+      line4: line4w, line5, line6, line7, line8, line9, line10, line11, partIII, line12, line13, line15: line13,
+    };
+  });
+
+  const line16 = sum(businesses.map((b) => b.line15));
+  const line27 = line16, line32 = line27, line33 = ti, line34 = R(netCapitalGain);
+  const line35 = Math.max(0, R(line33 - line34));
+  const line36 = R(line35 * QBI_RATE);
+  const line37 = Math.min(line32, line36);
+  return {
+    taxableIncomeBeforeQbi: ti, threshold, range, businesses,
+    scheduleC: needC ? { line2: carry, line3, line4, line5: -netted, line6: Math.min(0, R(line3 + netted)) } : undefined,
+    scheduleANeeded: inRange && base.some((b) => b.sstb),
+    line16, line27, line32, line33, line34, line35, line36, line37, line39: line37,
+    lossCarryforward: needC ? Math.min(0, R(line3 + netted)) : 0,
   };
 }

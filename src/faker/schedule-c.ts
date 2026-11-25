@@ -33,6 +33,9 @@ const ACTIVITIES: Array<[string, string]> = [
   ["Finish carpentry", "238350"],
 ];
 
+/** Activity codes above that are specified service trades or businesses (§ 199A(d)(2)). */
+const SSTB_CODES = new Set(["541600", "541219"]);
+
 const OPTIONAL_EXPENSES: Array<[keyof ScheduleCExpenses, number, number]> = [
   ["advertising", 100, 3000],
   ["contractLabor", 500, 12000],
@@ -121,6 +124,8 @@ export function buildScheduleC(
     homeOfficeSqFt: useHomeOffice ? homeOfficeSqFt : undefined,
     homeTotalSqFt: useHomeOffice ? homeTotalSqFt : undefined,
     paid1099Payments,
+    // § 199A specified service: consulting and accounting are SSTBs (no draw needed).
+    sstb: SSTB_CODES.has(businessCode),
   };
 
   // Reconcile to the cent against the engine's own line arithmetic (float sums can drift by 1¢).
@@ -130,4 +135,21 @@ export function buildScheduleC(
     else expenses.supplies = round2((expenses.supplies ?? 0) - drift);
   }
   return business;
+}
+
+/**
+ * After every other draw: about 30% of businesses have employees (W-2 wages on
+ * Schedule C line 26, with gross receipts raised by the same amount so line 31 is
+ * unchanged, and an EIN), and about 30% hold qualified property (UBIA) — the two
+ * figures Form 8995-A uses above the § 199A threshold.
+ */
+export function addBusinessPayrollAndProperty(faker: Faker, b: ScheduleCBusiness): void {
+  if (faker.datatype.boolean({ probability: 0.3 })) {
+    const wages = dollars(faker, 8000, 60000);
+    b.expenses.wages = round2((b.expenses.wages ?? 0) + wages);
+    b.grossReceipts = round2(b.grossReceipts + wages);
+    b.w2WagesPaid = wages;
+    b.ein = `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`;
+  }
+  if (faker.datatype.boolean({ probability: 0.3 })) b.ubia = dollars(faker, 5000, 120000);
 }
