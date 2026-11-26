@@ -658,13 +658,17 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     if (Number(p62("line5")) !== pct) bad.push(`5 ${p62("line5")} vs ${pct}`);
     // Table 2: 0 to 150%; +0.04 points per percent to 6% at 300%; +0.025 per percent to 8.5% at 400%; rounded half up.
     const fig = pct <= 150 ? 0 : pct >= 400 ? 0.085 : Math.floor(((pct <= 300 ? (pct - 150) * 40 : 6000 + (pct - 300) * 25) + 5) / 10) / 10000;
-    if (Math.abs(Number(p62("line7")) - fig) > 1e-9) bad.push(`7 ${p62("line7")} vs ${fig}`);
+    // Married filing separately without the line A exception: not an applicable taxpayer — lines 7–8b
+    // and line 11 (a)–(e) are skipped and line 24 is $0 (2025 Form 8962 instructions).
+    const ineligible = t.filingStatus === "MFS" && p62("lineA.mfsException") !== "Yes";
     const l8a = Math.floor((Math.round(l3 * 100) * Math.round(fig * 10000) + 500000) / 1000000);
-    if (!near(n0(p62("line8a")), l8a)) bad.push(`8a ${p62("line8a")} vs ${l8a}`);
+    if (!ineligible && Math.abs(Number(p62("line7")) - fig) > 1e-9) bad.push(`7 ${p62("line7")} vs ${fig}`);
+    if (!ineligible && !near(n0(p62("line8a")), l8a)) bad.push(`8a ${p62("line8a")} vs ${l8a}`);
+    if (ineligible && (p62("line7") || p62("line8a") || p62("line11.e"))) bad.push("lines 7, 8a and 11(e) should be blank (MFS, no exception)");
     const a = col("A"), b = col("B"), f = col("C");
-    const d = Math.max(0, round2(b - l8a)), e = Math.min(a, d);
-    if (!near(n0(p62("line11.a")), a) || !near(n0(p62("line11.b")), b) || !near(n0(p62("line11.f")), f)) bad.push("11 a/b/f vs 1095-A line 33");
-    if (!near(n0(p62("line11.d")), d) || !near(n0(p62("line11.e")), e)) bad.push(`11 d/e vs ${money(d)}/${money(e)}`);
+    const d = Math.max(0, round2(b - l8a)), e = ineligible ? 0 : Math.min(a, d);
+    if (!near(n0(p62("line11.f")), f) || (!ineligible && (!near(n0(p62("line11.a")), a) || !near(n0(p62("line11.b")), b)))) bad.push("11 a/b/f vs 1095-A line 33");
+    if (!ineligible && (!near(n0(p62("line11.d")), d) || !near(n0(p62("line11.e")), e))) bad.push(`11 d/e vs ${money(d)}/${money(e)}`);
     const excess = Math.max(0, round2(f - e));
     const tier = pct < 200 ? 0 : pct < 300 ? 1 : pct < 400 ? 2 : -1;
     const cap = tier < 0 ? Infinity : PTC_REPAYMENT_LIMIT[t.taxYear][tier][t.filingStatus === "Single" ? 0 : 1];

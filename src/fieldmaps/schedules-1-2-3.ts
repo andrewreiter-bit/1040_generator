@@ -253,7 +253,7 @@ function form8960(taxYear: number): FieldMap {
   add(f(16), "line9a", (x) => moneyOrBlank(m(x).investmentInterest));       // Form 4952 line 8
   for (const n of [17, 18]) add(f(n), `partII.f1_${n}`, () => BLANK);       // 9b state tax, 9c misc.
   add(f(19), "line9d", (x) => moneyOrBlank(m(x).investmentInterest));
-  add(f(20), "line10", () => BLANK);
+  add(f(20), "line10", (x) => moneyOrBlank(m(x).additionalModifications));
   add(f(21), "line11", (x) => moneyOrBlank(m(x).totalDeductions));
   add(f(22), "line12", (x) => money(m(x).netInvestmentIncome));
   add(f(23), "line13", (x) => money(m(x).modifiedAgi));

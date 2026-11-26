@@ -513,6 +513,13 @@ export interface FakeTaxpayer {
   gamblingWinnings?: GamblingWinnings[];
   /** Incentive stock option exercises (Forms 3921 → Form 6251 line 2i). */
   isoExercises?: IsoExercise[];
+  /**
+   * Married filing separately: qualifies for the Form 8962 line A exception (domestic abuse or
+   * spousal abandonment). Without it a separate filer can't take the PTC and repays the advance.
+   */
+  ptcMfsException?: boolean;
+  /** Form 8960 line 10: additional modifications to net investment income (positive reduces it). */
+  niitAdditionalModifications?: number;
   /** Health Insurance Marketplace coverage (Forms 1095-A → Form 8962). */
   marketplace1095As?: Marketplace1095A[];
   /** Education credits: students, institutions and expenses (Form 8863, Forms 1098-T). */

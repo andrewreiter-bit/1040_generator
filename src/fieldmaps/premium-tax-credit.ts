@@ -28,7 +28,9 @@ function form8962Map(taxYear: number): FieldMap {
   };
   add(`${P1}f1_1[0]`, "names", (_x, t) => namesOnReturn(t), { text: true });
   add(`${P1}f1_2[0]`, "ssn", (_x, t) => t.ssn, { text: true });
-  add(`${P1}c1_1[0]`, "lineA.mfsException", () => OFF, { box: true });
+  add(`${P1}c1_1[0]`, "lineA.mfsException", (_x, t) => checkIf(t.filingStatus === "MFS" && !!t.ptcMfsException), { box: true });
+  // A separate filer without the exception can't take the PTC: lines 7–8 and 11(a)–(e) stay blank.
+  const elig = (v: (x: Form8962Lines) => string) => (x: Form8962Lines) => (x.ineligibleMfs ? BLANK : v(x));
   add(`${P1}f1_3[0]`, "line1", (x) => String(x.line1), { text: true });
   add(`${P1}f1_4[0]`, "line2a", (x) => money(x.line2a));
   add(`${P1}f1_5[0]`, "line2b", (x) => (x.line2b ? money(x.line2b) : BLANK));
@@ -37,15 +39,15 @@ function form8962Map(taxYear: number): FieldMap {
     add(`${P1}c1_2[${i}]`, `line4.${tbl}`, (x) => checkIf(x.table === tbl), { box: true }));
   add(`${P1}f1_7[0]`, "line4", (x) => money(x.line4));
   add(`${P1}f1_8[0]`, "line5", (x) => String(x.line5), { text: true });
-  add(`${P1}f1_9[0]`, "line7", (x) => x.line7.toFixed(4), { text: true });
-  add(`${P1}f1_10[0]`, "line8a", (x) => money(x.line8a));
-  add(`${P1}f1_11[0]`, "line8b", (x) => money(x.line8b));
+  add(`${P1}f1_9[0]`, "line7", elig((x) => x.line7.toFixed(4)), { text: true });
+  add(`${P1}f1_10[0]`, "line8a", elig((x) => money(x.line8a)));
+  add(`${P1}f1_11[0]`, "line8b", elig((x) => money(x.line8b)));
   add(`${P1}c1_4[0]`, "line9.yes", () => OFF, { box: true });
   add(`${P1}c1_4[1]`, "line9.no", () => CHECK, { box: true });
   add(`${P1}c1_5[0]`, "line10.yes", () => CHECK, { box: true });
   add(`${P1}c1_5[1]`, "line10.no", () => OFF, { box: true });
   (["a", "b", "c", "d", "e", "f"] as const).forEach((col, i) =>
-    add(`${P1}Part2Table1[0].BodyRow1[0].f1_${13 + i}[0]`, `line11.${col}`, (x) => money(x.line11[col])));
+    add(`${P1}Part2Table1[0].BodyRow1[0].f1_${13 + i}[0]`, `line11.${col}`, col === "f" ? (x) => money(x.line11.f) : elig((x) => money(x.line11[col]))));
   // Lines 12–23 (monthly): blank.
   for (let row = 1; row <= 12; row++) {
     for (let k = 0; k < 6; k++) {
