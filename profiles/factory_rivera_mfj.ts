@@ -22,15 +22,6 @@ import { zipInState } from "./zip";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
-function fakeSSN(faker: Faker): string {
-  let area: number;
-  do { area = faker.number.int({ min: 1, max: 899 }); }
-  while (area === 666);
-  const group = faker.number.int({ min: 1, max: 99 });
-  const serial = faker.number.int({ min: 1, max: 9999 });
-  return `${String(area).padStart(3, "0")}-${String(group).padStart(2, "0")}-${String(serial).padStart(4, "0")}`;
-}
-
 function fakeEIN(faker: Faker): string {
   const prefixes = [10,12,11,13,14,15,16,20,21,22,23,24,25,26,27,
                     30,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,
@@ -40,32 +31,6 @@ function fakeEIN(faker: Faker): string {
   const prefix = faker.helpers.arrayElement(prefixes);
   const suffix = faker.number.int({ min: 1000000, max: 9999999 });
   return `${prefix}-${suffix}`;
-}
-
-function fakeRoutingNumber(faker: Faker): string {
-  const prefixes = ["01","02","03","04","05","06","07","08","09","10","11","12",
-                    "21","22","23","24","25","26","27","28","29","30","31","32"];
-  const prefix = faker.helpers.arrayElement(prefixes);
-  const middle = faker.string.numeric(6);
-  const base = prefix + middle;
-  const d = base.split("").map(Number);
-  const checksum = (10 - ((3*(d[0]+d[3]+d[6]) + 7*(d[1]+d[4]+d[7]) + (d[2]+d[5])) % 10)) % 10;
-  return base + checksum;
-}
-
-function fakeDateInYear(faker: Faker, year: number): string {
-  const start = new Date(year, 0, 1);
-  const end   = new Date(year, 11, 31);
-  const d = faker.date.between({ from: start, to: end });
-  return `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${d.getFullYear()}`;
-}
-
-function fakeBirthDate(faker: Faker, minAge = 22, maxAge = 70): string {
-  const now = new Date();
-  const year = now.getFullYear() - faker.number.int({ min: minAge, max: maxAge });
-  const month = faker.number.int({ min: 1, max: 12 });
-  const day   = faker.number.int({ min: 1, max: 28 });
-  return `${String(month).padStart(2,"0")}/${String(day).padStart(2,"0")}/${year}`;
 }
 
 function fakeDollar(faker: Faker, min: number, max: number): number {
@@ -218,7 +183,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
     businessIncome: faker.datatype.boolean({ probability: 0.2 }) ? fakeDollar(faker, -5000, 80000) : null,
     rentalIncome:   faker.datatype.boolean({ probability: 0.15 }) ? fakeDollar(faker, 0, 30000) : null,
     capitalGains:   faker.datatype.boolean({ probability: 0.25 }) ? fakeDollar(faker, -3000, 20000) : null,
-    socialSecurityBenefits: age(birthDateStr) >= 62 ? fakeDollar(faker, 5000, 30000) : null,
+    socialSecurityBenefits: age(birthDateStr, taxYear) >= 62 ? fakeDollar(faker, 5000, 30000) : null,
     takesStandardDeduction: takesStandard,
     itemizedDeductionTotal: takesStandard ? null : fakeDollar(faker, 29000, 75000),
     preparerPtin: faker.datatype.boolean({ probability: 0.4 })
@@ -283,8 +248,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   return taxpayer;
 }
 
-function age(dob: string): number {
-  const [m, d, y] = dob.split("/").map(Number);
-  const now = new Date();
-  return now.getFullYear() - y - (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d) ? 1 : 0);
+/** Age at the end of the tax year (not today), so a seed gives the same household whenever it runs. */
+function age(dob: string, taxYear: number): number {
+  return taxYear - Number(dob.split("/")[2]);
 }
