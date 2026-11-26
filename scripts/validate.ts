@@ -42,7 +42,7 @@ const COMMON_FORMS = [
   "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "fw2g", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "f1099sa", "fw4",
 ];
-const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
+const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj", "retired_single"];
 
 const program = new Command();
 program
