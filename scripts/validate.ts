@@ -38,7 +38,7 @@ import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "f1099sa", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -231,7 +231,7 @@ function f1040Checks(t: FakeTaxpayer, runs: Record<string, FormRun>): Check[] {
   eq(1, "1040-12-deduction", k("line12"), deductionAmount(t));
 
   // Arithmetic chain
-  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line4b")) + n0(k("line5b")) + n0(k("line6b")) + n0(k("line7")) + n0(k("line8")));
+  eq(1, "1040-9-total-income", k("line9"), n0(k("line1a")) + n0(k("line1h")) + n0(k("line2b")) + n0(k("line3b")) + n0(k("line4b")) + n0(k("line5b")) + n0(k("line6b")) + n0(k("line7")) + n0(k("line8")));
   eq(1, "1040-15-taxable-income", k("line15"), Math.max(0, n0(k("line11")) - n0(k("line14"))));
 
   // A dependent can't be born after the tax year
@@ -492,11 +492,18 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     const taxable = (d: (k: string) => string | undefined) => (["G", "Q"].includes(code(d)) ? 0 : n0(box(d, "box2a")));
     const fully = (d: (k: string) => string | undefined) => !["G", "Q"].includes(code(d)) && near(taxable(d), n0(box(d, "box1")));
     const ties: string[] = [];
+    // A disability pension before retirement age is line 1h wages, not line 5; a person with
+    // Form 8606 basis has their IRA taxable amount from the form (lines 15c + 18), not box 2a.
+    const recs = r.retirement.records;
+    const f8606 = r.retirement.form8606;
+    const via8606 = (i: number) => isIra(rDocs[i]) && !!f8606[recs[i]?.r.recipient ?? "primary"];
+    const f8606Taxable = round2((f8606.primary?.taxable ?? 0) + (f8606.spouse?.taxable ?? 0));
     for (const [side, a, b] of [["ira", "line4a", "line4b"], ["pension", "line5a", "line5b"]] as const) {
-      const ds = rDocs.filter((d) => isIra(d) === (side === "ira"));
+      const idx = rDocs.map((d, i) => i).filter((i) => recs[i]?.line !== "wages" && isIra(rDocs[i]) === (side === "ira"));
+      const ds = idx.map((i) => rDocs[i]);
       const gross = round2(ds.reduce((s, d) => s + n0(box(d, "box1")), 0));
-      const tax = round2(ds.reduce((s, d) => s + taxable(d), 0));
-      const blank = ds.every(fully);
+      const tax = round2(idx.reduce((s, i) => s + (via8606(i) ? 0 : taxable(rDocs[i])), 0) + (side === "ira" ? f8606Taxable : 0));
+      const blank = idx.every((i) => !via8606(i) && fully(rDocs[i]));
       if (!near(n0(line(b)), tax) || (ds.length > 0) !== ((line(b) ?? "") !== "")) ties.push(`${b} ${line(b) || "(blank)"} vs Σ taxable ${money(tax)}`);
       if (blank ? (line(a) ?? "") !== "" : !near(n0(line(a)), gross)) ties.push(`${a} ${line(a) || "(blank)"} vs ${blank ? "blank (all fully taxable)" : `Σ box 1 ${money(gross)}`}`);
     }
@@ -758,6 +765,21 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "8889-16-equals-sch1-8f", round2(sum16), n0(s1("line8f")), "Σ Form 8889 line 16 vs Schedule 1 line 8f");
     tie(2, "8889-17b-equals-sch2-17c", round2(sum17), docs.f1040s2?.length ? n0(s2("line17c")) : 0, "Σ Form 8889 line 17b vs Schedule 2 line 17c");
   }
+  // ── Schedule R, Form 8606, Form 4684: their result ties to the 1040 schedules ──
+  if (docs.f1040sr?.length) {
+    const sr = keyed(docs.f1040sr[0], "f1040sr");
+    tie(2, "schR-22-equals-sch3-6d", n0(sr("line22")), n0(s3("line6d")), "Schedule R line 22 vs Schedule 3 line 6d");
+    const ok = near(n0(sr("line19")), Math.max(0, round2(n0(sr("line12")) - n0(sr("line18"))))) && near(n0(sr("line22")), Math.min(n0(sr("line20")), n0(sr("line21"))));
+    checks.push({ phase: 2, id: "schR-lines-tie-out", ok });
+  }
+  if (docs.f8606?.length) {
+    const taxable = round2(docs.f8606.reduce((a, run) => { const k = keyed(run, "f8606"); return a + n0(k("line15c")) + n0(k("line18")); }, 0));
+    checks.push({ phase: 2, id: "8606-taxable-within-1040-4b", ok: taxable <= n0(line("line4b")) + 0.005, detail: `Σ 15c + 18 ${money(taxable)} vs 4b ${line("line4b")}` });
+  }
+  if (docs.f4684?.length) {
+    const k = keyed(docs.f4684[0], "f4684");
+    if (docs.f1040sa?.length) tie(2, "4684-18-equals-schA-15", n0(k("line18")), n0(keyed(docs.f1040sa[0], "f1040sa")("line15")), "Form 4684 line 18 vs Schedule A line 15");
+  }
   // ── Form 4952 (investment interest): its arithmetic, and its inputs and deduction tied to the return ──
   if (docs.f4952?.length) {
     const k = keyed(docs.f4952[0], "f4952");
@@ -789,7 +811,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const m60 = keyed(docs.f8960?.[0], "f8960");
   if (docs.f8960?.length) {
     const g = (x: string) => n0(m60(x));
-    const ok = near(g("line4c"), round2(g("line4a") + g("line4b"))) && near(g("line9d"), g("line9a")) && near(g("line11"), round2(g("line9d") + g("line10")))
+    const ok = near(g("line4c"), round2(g("line4a") + g("line4b"))) && near(g("line9d"), round2(g("line9a") + g("line9b"))) && near(g("line11"), round2(g("line9d") + g("line10")))
       && near(g("line12"), Math.max(0, round2(g("line8") - g("line11"))));
     checks.push({ phase: 2, id: "8960-lines-tie-out", ok, detail: ok ? undefined : `4c ${g("line4c")}, 8 ${g("line8")}, 11 ${g("line11")}, 12 ${g("line12")}` });
   }
@@ -942,7 +964,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

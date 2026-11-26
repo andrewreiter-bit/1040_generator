@@ -166,6 +166,20 @@ export interface CapitalAssetSale {
   federalWithheld?: number;
 }
 
+/**
+ * One personal casualty event (Form 4684 Section A). "federal": a federally declared disaster;
+ * "qualified": a qualified disaster loss ($500 floor, no 10%-of-AGI limit); "other": not
+ * attributable to a federally declared disaster (not deductible for 2018–2025 without gains).
+ */
+export interface CasualtyEvent {
+  kind: "federal" | "qualified" | "other";
+  description?: string;
+  /** FEMA declaration number ("DR-…" or "EM-…") for a federally declared disaster. */
+  femaNumber?: string;
+  items: Array<{ basis: number; fmvBefore: number; fmvAfter: number; insurance: number;
+    description?: string; location?: string; zip?: string; dateAcquired?: string }>;
+}
+
 /** Schedule A inputs (amounts paid, before any limit). */
 export interface ItemizedDeductions {
   medicalExpenses?: number;          // 1 (before the 7.5%-of-AGI floor)
@@ -183,8 +197,13 @@ export interface ItemizedDeductions {
    * charityNonCash are ignored: line 11 = cash60 + cash30, line 12 = the rest.
    */
   charityByLimit?: { cash60?: number; cash30?: number; nonCash50?: number; nonCash30?: number; capitalGain30?: number; capitalGain20?: number };
+  /** Form 8283 Section A rows (noncash gifts); they make up line 12. */
+  noncashGifts?: Array<{ donee: string; doneeAddress?: string; description: string; dateContributed: string;
+    dateAcquired?: string; howAcquired?: string; cost?: number; fmv: number; method?: string }>;
   /** 13. Carryover from prior years (assumed within its 5 years). */
   charityCarryover?: number;
+  /** Form 4684 Section A: personal-use casualty events (one form per event). */
+  casualtyEvents?: CasualtyEvent[];
   /** 16. Gambling losses, deductible up to the gambling winnings on Schedule 1 line 8b. */
   gamblingLosses?: number;
   /** 18. Itemize even when smaller than the standard deduction. */
@@ -249,7 +268,10 @@ export interface Unemployment1099G {
 export type DistributionCode =
   | "1"   // early distribution, no known exception (10% additional tax)
   | "2"   // early distribution, exception applies
+  | "3"   // disability
+  | "4"   // death (beneficiary)
   | "7"   // normal distribution
+  | "C"   // reportable death benefits under § 6050Y
   | "G"   // direct rollover to a qualified plan or IRA (box 2a = 0)
   | "Q";  // qualified Roth IRA distribution (not taxable)
 
@@ -276,6 +298,8 @@ export interface Retirement1099R {
   employeeContributions?: number;
   distributionCode: DistributionCode; // box 7
   iraSepSimple: boolean;              // box 7 checkbox
+  /** Code 3 received before minimum retirement age: wages (Form 1040 line 1h), not a pension. */
+  disabilityBeforeRetirementAge?: boolean;
   /** Box 14–16 (one state). */
   stateWithheld?: number;
   stateCode?: string;
@@ -402,6 +426,20 @@ export interface HsaAccount {
   };
 }
 
+/** Form 8606 inputs for one person (traditional, SEP and SIMPLE IRAs). */
+export interface Form8606Input {
+  /** Line 1: nondeductible contributions for the year. */
+  nondeductibleContributions?: number;
+  /** Line 2: total basis in traditional IRAs from prior years. */
+  priorBasis: number;
+  /** Line 6: value of all traditional, SEP and SIMPLE IRAs on December 31. */
+  yearEndValue: number;
+  /** Line 7: distributions, excluding rollovers and Roth conversions. */
+  distributions: number;
+  /** Line 8: net amount converted to Roth IRAs. */
+  conversions: number;
+}
+
 /** Investment interest (Form 4952). */
 export interface InvestmentInterest {
   /** Line 1: investment interest paid or accrued this year. */
@@ -443,6 +481,12 @@ export interface DocumentContext {
   educationIndex?: number;
   /** Whose HSA (Form 8889, Form 1099-SA). */
   hsaPerson?: "primary" | "spouse";
+  /** Form 8606: whose form. */
+  form8606Person?: "primary" | "spouse";
+  /** Form 4684: index into itemized.casualtyEvents. */
+  casualtyIndex?: number;
+  /** Form 8283: which copy (four Section A rows each). */
+  form8283Copy?: number;
   /** Which ISO exercise (index into the included exercises): Form 3921. */
   isoIndex?: number;
   /** Which Marketplace policy (index into source.marketplace1095As): Form 1095-A. */
@@ -507,6 +551,10 @@ export interface FakeTaxpayer {
   unemployment1099Gs?: Unemployment1099G[];
   /** Health savings accounts, per person (Form 8889). Employer contributions are W-2 box 12 code W. */
   hsa?: { primary?: HsaAccount; spouse?: HsaAccount };
+  /** Retired on permanent and total disability (Schedule R), per person. */
+  permanentlyDisabled?: { primary?: boolean; spouse?: boolean };
+  /** Form 8606 Part I/II inputs, per person with traditional IRA basis. */
+  form8606?: { primary?: Form8606Input; spouse?: Form8606Input };
   /** Investment interest expense (Form 4952 → Schedule A line 9). */
   investmentInterest?: InvestmentInterest;
   /** Forms W-2G (gambling winnings). */
@@ -518,6 +566,8 @@ export interface FakeTaxpayer {
    * spousal abandonment). Without it a separate filer can't take the PTC and repays the advance.
    */
   ptcMfsException?: boolean;
+  /** Form 8960 line 9b: state, local and foreign income tax allocable to net investment income. */
+  niitStateIncomeTax?: number;
   /** Form 8960 line 10: additional modifications to net investment income (positive reduces it). */
   niitAdditionalModifications?: number;
   /** Health Insurance Marketplace coverage (Forms 1095-A → Form 8962). */

@@ -145,7 +145,9 @@ function schedule3(taxYear: number): FieldMap {
   add(F(L.line2), "line2", (x) => moneyOrBlank(x.schedule3.dependentCareCredit));
   add(F(L.line3), "line3", (x) => moneyOrBlank(x.schedule3.educationCredit));
   add(F(L.line4), "line4", (x) => moneyOrBlank(x.schedule3.saversCredit));
-  add(F(L.line7), "line7", () => BLANK);
+  // 6d: Schedule R; line 7 totals lines 6a–6z (only 6d is modelled).
+  add(F("P1.f1_12"), "line6d", (x) => moneyOrBlank(x.schedule3.elderlyCredit));
+  add(F(L.line7), "line7", (x) => moneyOrBlank(x.schedule3.elderlyCredit));
   add(F(L.line8), "line8", (x) => moneyOrBlank(x.scheduleThreeCredits));
   add(F(L.line9), "line9", (x) => moneyOrBlank(x.schedule3.netPremiumTaxCredit));
   add(F(L.line11), "line11", (x) => moneyOrBlank(x.schedule3.excessSocialSecurity));
@@ -229,6 +231,8 @@ function form8959(taxYear: number): FieldMap {
   return build();
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 function form8960(taxYear: number): FieldMap {
   const P1 = "topmostSubform[0].Page1[0].";
   const { add, build } = mapBuilder("f8960", taxYear);
@@ -251,8 +255,9 @@ function form8960(taxYear: number): FieldMap {
   add(f(14), "line7", () => BLANK);
   add(f(15), "line8", (x) => money(x.taxableInterest + x.ordinaryDividends + m(x).line4c + x.capitalGain));
   add(f(16), "line9a", (x) => moneyOrBlank(m(x).investmentInterest));       // Form 4952 line 8
-  for (const n of [17, 18]) add(f(n), `partII.f1_${n}`, () => BLANK);       // 9b state tax, 9c misc.
-  add(f(19), "line9d", (x) => moneyOrBlank(m(x).investmentInterest));
+  add(f(17), "line9b", (x) => moneyOrBlank(m(x).stateIncomeTax));          // state/local income tax
+  add(f(18), "partII.f1_18", () => BLANK);                                 // 9c misc. investment expenses
+  add(f(19), "line9d", (x) => moneyOrBlank(round2(m(x).investmentInterest + m(x).stateIncomeTax)));
   add(f(20), "line10", (x) => moneyOrBlank(m(x).additionalModifications));
   add(f(21), "line11", (x) => moneyOrBlank(m(x).totalDeductions));
   add(f(22), "line12", (x) => money(m(x).netInvestmentIncome));

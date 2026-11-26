@@ -52,6 +52,8 @@ export function isQualifyingCarePerson(t: FakeTaxpayer, i: number): boolean {
 
 export function form2441(
   t: FakeTaxpayer, w2s: W2Record[], ses: ScheduleSELines[], agi: number, line18: number, R: Rounder,
+  /** Other earned income per person (Form 1040 line 1h, e.g. disability pensions before retirement age). */
+  otherEarned: { primary: number; spouse: number } = { primary: 0, spouse: 0 },
 ): Form2441Lines | undefined {
   const care = t.dependentCare;
   if (!care) return undefined;
@@ -68,7 +70,8 @@ export function form2441(
   const mfsTogether = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false;
   const earned = (who: "primary" | "spouse") => R(
     sum(w2s.filter((w) => (w.employee ?? "primary") === who).map((w) => w.wages))
-    + sum(ses.filter((s) => s.owner === who).map((s) => s.combined - s.deduction)),
+    + sum(ses.filter((s) => s.owner === who).map((s) => s.combined - s.deduction))
+    + otherEarned[who],
   );
   const line3 = Math.min(sum(persons.map((p) => p.amount)), persons.length >= 2 ? 6000 : 3000);
   const line4 = Math.max(0, earned("primary"));
