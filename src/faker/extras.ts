@@ -29,6 +29,7 @@
 import { Faker } from "@faker-js/faker";
 import { FakeTaxpayer, Retirement1099R } from "./taxpayer";
 import { HSA_CATCH_UP, HSA_LIMIT } from "../config/tax-year";
+import { cityStateZip, zipInState } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const dollars = (faker: Faker, min: number, max: number) => round2(faker.number.float({ min, max, fractionDigits: 2 }));
@@ -45,7 +46,7 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   const disAmt = dollars(faker, 6000, 22000);
   const disWithhold = faker.datatype.boolean({ probability: 0.5 });
   const disPayer = { name: `${faker.company.name()} Disability Plan`, tin: `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`,
-    street: faker.location.streetAddress(), city: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}`, acct: faker.string.numeric(10) };
+    street: faker.location.streetAddress(), city: cityStateZip(faker), acct: faker.string.numeric(10) };
   const mfsPtcGo = faker.datatype.boolean({ probability: 0.25 });
   const mfsPremium = dollars(faker, 4000, 9000);
   const mfsSlcspFactor = faker.number.float({ min: 0.8, max: 1.2, fractionDigits: 3 });
@@ -58,7 +59,7 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   const gambleLottery = faker.datatype.boolean({ probability: 0.35 });
   const gambleSpouse = faker.datatype.boolean({ probability: 0.3 });
   const gamblePayer = { name: `${faker.company.name()} Casino`, tin: `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`,
-    street: faker.location.streetAddress(), city: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}` };
+    street: faker.location.streetAddress(), city: cityStateZip(faker) };
   const gambleMonth = faker.number.int({ min: 1, max: 12 }), gambleDay = faker.number.int({ min: 1, max: 28 });
   const gambleType = faker.helpers.arrayElement(["Slots", "Keno", "Bingo", "Poker tournament"]);
   const lossesGo = faker.datatype.boolean({ probability: 0.5 });
@@ -68,7 +69,7 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   const noncashCount = faker.number.int({ min: 1, max: 3 });
   const noncashItems = Array.from({ length: 4 }, () => ({
     donee: `${faker.company.name()} ${faker.helpers.arrayElement(["Thrift Store", "Charities", "Foundation", "Rescue Mission"])}`,
-    address: `${faker.location.streetAddress()}, ${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}`,
+    address: `${faker.location.streetAddress()}, ${cityStateZip(faker)}`,
     description: faker.helpers.arrayElement(["Used clothing, good condition", "Household goods, good condition", "Furniture, fair condition", "Books, good condition"]),
     month: faker.number.int({ min: 1, max: 12 }), day: faker.number.int({ min: 1, max: 28 }), costFactor: faker.number.float({ min: 1.5, max: 4, fractionDigits: 2 }),
   }));
@@ -146,7 +147,7 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
     t.gamblingWinnings = [{
       recipient: joint && gambleSpouse ? "spouse" : "primary",
       payerName: kind === "Lottery" ? `${t.state} State Lottery` : gamblePayer.name, payerTin: gamblePayer.tin,
-      payerStreet: gamblePayer.street, payerCity: kind === "Lottery" ? gamblePayer.city.replace(/, [A-Z]{2} /, `, ${t.state} `) : gamblePayer.city,
+      payerStreet: gamblePayer.street, payerCity: kind === "Lottery" ? gamblePayer.city.replace(/, [A-Z]{2} (\d{5})$/, (_m, z: string) => `, ${t.state} ${zipInState(t.state, z)}`) : gamblePayer.city,
       dateWon: `${String(gambleMonth).padStart(2, "0")}/${String(gambleDay).padStart(2, "0")}/${y}`, wagerType: wager[kind],
       winnings: gambleAmt, federalWithheld: kind === "Lottery" && gambleAmt > 5000 ? round2(gambleAmt * 0.24) : 0,
     }];

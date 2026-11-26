@@ -17,6 +17,7 @@
  */
 import { Faker } from "@faker-js/faker";
 import { DistributionCode, FakeTaxpayer, Retirement1099R } from "./taxpayer";
+import { cityStateZip } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const dollars = (faker: Faker, min: number, max: number) => round2(faker.number.float({ min, max, fractionDigits: 2 }));
@@ -29,7 +30,7 @@ function payer(faker: Faker, kind: "ira" | "pension" | "roth" | "plan") {
     payerName: `${faker.company.name()} ${suffix}`,
     payerTin: `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`,
     payerStreet: faker.location.streetAddress(),
-    payerCity: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}`,
+    payerCity: cityStateZip(faker),
     accountNumber: faker.string.numeric(10),
   };
 }

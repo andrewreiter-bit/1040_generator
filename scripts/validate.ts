@@ -34,6 +34,7 @@ import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
 import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
+import { zipMatchesState } from "../src/faker/zip";
 import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
@@ -329,6 +330,21 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 1, id: "w4-ssn", ok: digits(k("ssn")) === digits(t.ssn) });
     const expected = w4ChildrenAmount(t) + w4OtherDependentsAmount(t);
     checks.push({ phase: 1, id: "w4-step3-dependents", ok: near(n0(k("line3")), expected), detail: `got ${k("line3") || "(blank)"}, expected ${money(expected)}` });
+  }
+
+  // ── Addresses: every ZIP sits in its state's prefix range ─────────────────────
+  {
+    const off: string[] = [];
+    if (!zipMatchesState(t.state, t.zipCode)) off.push(`home ${t.state} ${t.zipCode}`);
+    for (const w of t.w2Records) if (!zipMatchesState(w.employerState, w.employerZip)) off.push(`W-2 ${w.employerState} ${w.employerZip}`);
+    // "City, ST 12345" strings and casualty items anywhere on the profile.
+    const walk = (v: unknown): void => {
+      if (typeof v === "string") { const m = v.match(/, ([A-Z]{2}) (\d{5}(?:-\d{4})?)$/); if (m && !zipMatchesState(m[1], m[2])) off.push(v); }
+      else if (Array.isArray(v)) v.forEach(walk);
+      else if (v && typeof v === "object") Object.values(v).forEach(walk);
+    };
+    walk(t);
+    checks.push({ phase: 2, id: "zip-in-state", ok: off.length === 0, detail: off.length ? off.slice(0, 3).join("; ") : "home, W-2 and payer ZIPs in state" });
   }
 
   // ── 1099s ───────────────────────────────────────────────────────────────────

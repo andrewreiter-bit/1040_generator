@@ -12,6 +12,7 @@
  */
 import { Faker } from "@faker-js/faker";
 import { FakeTaxpayer, HsaAccount } from "./taxpayer";
+import { cityStateZip } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const dollars = (faker: Faker, min: number, max: number) => round2(faker.number.float({ min, max, fractionDigits: 2 }));
@@ -27,7 +28,7 @@ export function addHsa(faker: Faker, t: FakeTaxpayer, limit: { self: number; fam
   const qualifiedShare = faker.number.float({ min: 0.6, max: 0.95, fractionDigits: 3 });
   const trustee = {
     name: `${faker.company.name()} HSA Bank`, street: faker.location.streetAddress(),
-    city: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}`,
+    city: cityStateZip(faker),
     tin: `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`,
   };
   const account = faker.string.numeric(10);

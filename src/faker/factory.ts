@@ -18,6 +18,7 @@ import { addHsa } from "./hsa";
 import { addExtras } from "./extras";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
+import { zipInState } from "./zip";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -113,7 +114,7 @@ function buildW2(faker: Faker, state: string, taxYear: number): W2Record {
     employerStreet: faker.location.streetAddress(),
     employerCity: faker.location.city(),
     employerState: state,
-    employerZip: faker.location.zipCode(),
+    employerZip: zipInState(state, faker.location.zipCode()),
     wages,
     federalWithheld,
     socialSecurityWages: ssWages,
@@ -196,7 +197,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
     aptNumber: faker.datatype.boolean({ probability: 0.3 }) ? `Apt ${faker.string.alphanumeric(3).toUpperCase()}` : null,
     city: faker.location.city(),
     state,
-    zipCode: faker.location.zipCode(),
+    zipCode: zipInState(state, faker.location.zipCode()),
     filingStatus,
     spouseFirstName:   hasSPouse ? faker.person.firstName() : null,
     spouseLastName:    hasSPouse ? lastName : null,

@@ -23,6 +23,7 @@ import { saltCap } from "../config/tax-year";
 import { includedW2s } from "../tax/household";
 import { scheduleE } from "../tax/rental";
 import { cents } from "../tax/rounding";
+import { zipInState } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const dollars = (faker: Faker, min: number, max: number) => round2(faker.number.float({ min, max, fractionDigits: 2 }));
@@ -67,7 +68,7 @@ export function buildRental(faker: Faker, targetNet: number): RentalProperty {
   const street = faker.location.streetAddress();
   const city = faker.location.city();
   const state = faker.location.state({ abbreviated: true });
-  const zip = faker.location.zipCode("#####");
+  const zip = zipInState(state, faker.location.zipCode("#####"));
   const total = round2(Object.values(expenses).reduce((s: number, v) => s + (v ?? 0), 0));
   const property: RentalProperty = {
     address: `${street}, ${city}, ${state} ${zip}`,
