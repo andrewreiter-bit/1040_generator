@@ -11,8 +11,10 @@
  * - Marketplace coverage on a separate return without the line A exception (Form 8962 repays
  *   the advance payments): ~25% of separate filers under 65 without a policy.
  * - Separated spouse: separate filers (90% of those with an EIC child, 40% of the rest) live apart
- *   from the spouse for the last 6 months (60%) or are legally separated (40%), so EIC with a
- *   qualifying child is allowed (§ 32(d)(2)).
+ *   from the spouse for the last 6 months (60%; 85% of those paid over half the cost of the home)
+ *   or are legally separated (40%), so EIC with a qualifying child is allowed (§ 32(d)(2)).
+ *   Separated separate filers who work and have a child under 13 get the usual care draw (45%);
+ *   Form 2441 allows the credit only to those considered unmarried (§ 21(e)(4)).
  * - Part-year HSA coverage (Form 8889 Line 3 Limitation Chart): ~25% of HSA holders, 6–11
  *   months; skipped when the employer's code W is over the prorated limit, and the holder's
  *   contribution is capped at the prorated limit less code W (never an excess).
@@ -33,6 +35,7 @@ import { Faker } from "@faker-js/faker";
 import { FakeTaxpayer, Retirement1099R } from "./taxpayer";
 import { HSA_CATCH_UP, HSA_LIMIT } from "../config/tax-year";
 import { eicChildren } from "../tax/household";
+import { buildDependentCare } from "./dependent-care";
 import { cityStateZip, zipInState } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -88,6 +91,7 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   const casDesc = faker.helpers.arrayElement(["Detached garage", "Personal vehicle", "Home contents", "Storage shed"]);
   const sepRoll = faker.number.float({ min: 0, max: 1, fractionDigits: 4 });
   const sepLegal = faker.datatype.boolean({ probability: 0.4 });
+  const halfCostGo = faker.datatype.boolean({ probability: 0.85 });
 
   // ── IRA basis (Form 8606) ──
   const rs = t.retirement1099Rs ?? [];
@@ -164,7 +168,13 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   // earlier in the year (mfsLivedWithSpouse stays unset), so only EIC and the separated-spouse box change.
   if (t.filingStatus === "MFS" && sepRoll < (eicChildren(t).length ? 0.9 : 0.4)) {
     if (sepLegal) t.mfsLegallySeparated = true;
-    else t.mfsApartLast6Months = true;
+    else { t.mfsApartLast6Months = true; t.mfsPaidOverHalfHomeCost = halfCostGo; }
+  }
+  // Child care for separated separate filers (Form 2441 line A). The care draws come after every
+  // value above (all drawn up front), so their varying count moves nothing else.
+  if (t.filingStatus === "MFS" && (t.mfsApartLast6Months || t.mfsLegallySeparated) && !t.dependentCare) {
+    const care = buildDependentCare(faker, t, true);
+    if (care) t.dependentCare = care;
   }
 
   // ── Itemizers: reallocations that keep Schedule A line 17 ──

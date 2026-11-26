@@ -15,14 +15,15 @@
  *     (neither modelled)
  *   Line 11 smaller of 9c and 10 → Schedule 3 line 2
  *
- * Married filing separately: only a filer who lived apart from the spouse can claim it
- * (treated as unmarried); one who lived with the spouse gets no credit. Part III
+ * Married filing separately: only a filer considered unmarried (§ 21(e)(4): the spouse not in the
+ * home for the last 6 months, over half the cost of the home paid, line A checked) can claim it;
+ * any other separate filer gets no credit. Part III
  * (employer-provided benefits, W-2 box 10) and Schedule H (household employees) aren't
  * modelled; line 9b (prior-year expenses) is 0 and flagged when it could change the credit.
  */
 import { FakeTaxpayer, W2Record } from "../faker/taxpayer";
 import { ScheduleSELines } from "./business";
-import { isQualifyingChild } from "./household";
+import { isQualifyingChild, mfsUnmarriedForCare } from "./household";
 import { Rounder, sumWith } from "./rounding";
 
 export interface Form2441Person { dependentIndex: number; amount: number }
@@ -67,7 +68,7 @@ export function form2441(
     }
   }
   const persons = care.expenses.filter((e) => e.amount > 0 && isQualifyingCarePerson(t, e.dependentIndex));
-  const mfsTogether = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false;
+  const mfsTogether = t.filingStatus === "MFS" && !mfsUnmarriedForCare(t);
   const earned = (who: "primary" | "spouse") => R(
     sum(w2s.filter((w) => (w.employee ?? "primary") === who).map((w) => w.wages))
     + sum(ses.filter((s) => s.owner === who).map((s) => s.combined - s.deduction))
