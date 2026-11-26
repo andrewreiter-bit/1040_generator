@@ -455,6 +455,11 @@ export interface GamblingWinnings {
   recipient: "primary" | "spouse";
   payerName: string;
   payerTin: string;
+  payerStreet?: string;
+  /** "City, ST ZIP". */
+  payerCity?: string;
+  dateWon?: string;        // box 2, MM/DD/YYYY
+  wagerType?: string;      // box 3
   winnings: number;        // box 1
   federalWithheld: number; // box 4
 }
@@ -481,6 +486,8 @@ export interface DocumentContext {
   educationIndex?: number;
   /** Whose HSA (Form 8889, Form 1099-SA). */
   hsaPerson?: "primary" | "spouse";
+  /** Form W-2G: index into the return's W-2Gs. */
+  w2gIndex?: number;
   /** Form 8606: whose form. */
   form8606Person?: "primary" | "spouse";
   /** Form 4684: index into itemized.casualtyEvents. */

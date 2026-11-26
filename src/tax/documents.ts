@@ -26,6 +26,7 @@ import { reportedSales } from "../fieldmaps/f1099b";
 import { students1098T } from "../fieldmaps/education";
 import { includedIsoExercises } from "../fieldmaps/amt";
 import { hsaDistributionPeople } from "../fieldmaps/hsa";
+import { includedW2gs } from "../fieldmaps/w2g";
 import { computeReturn } from "./compute";
 import { includedW2s } from "./household";
 
@@ -61,7 +62,8 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.form8962) out.push("f8962");
   if (r.schedule1.hsa?.forms.length) out.push("f8889");
   if (r.form4952?.required) out.push("f4952");
-  if (r.scheduleR) out.push("f1040sr");
+  // Schedule R only with a credit: the instructions stop at line 19 when it's zero or less.
+  if ((r.scheduleR?.line22 ?? 0) > 0) out.push("f1040sr");
   if (r.retirement.form8606.primary || r.retirement.form8606.spouse) out.push("f8606");
   if (t.itemized?.casualtyEvents?.length) out.push("f4684");
   if (r.itemizes && t.itemized?.noncashGifts?.length) out.push("f8283");
@@ -131,6 +133,11 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
       const fs = computeReturn(t).schedule1.hsa?.forms ?? [];
       if (!getFieldMap("f8889", t.taxYear)) return [];
       return fs.map((f, i) => ({ index: i + 1, count: fs.length, label: `Form 8889 #${i + 1} (${f.person})`, view: { ...t, document: { source: t, hsaPerson: f.person } } }));
+    }
+    case "fw2g": {
+      if (!getFieldMap("fw2g", t.taxYear)) return [];
+      const gs = includedW2gs(t);
+      return gs.map((_, i) => ({ index: i + 1, count: gs.length, label: `W-2G #${i + 1}`, view: { ...t, document: { source: t, w2gIndex: i } } }));
     }
     case "f1099sa": {
       if (!getFieldMap("f1099sa", t.taxYear)) return [];

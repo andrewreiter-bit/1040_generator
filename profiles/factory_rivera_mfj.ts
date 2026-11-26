@@ -15,6 +15,7 @@ import { buildEducation } from "./education";
 import { buildMarketplace } from "./marketplace";
 import { buildIsoExercises } from "./iso";
 import { addHsa } from "./hsa";
+import { addExtras } from "./extras";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
 
@@ -277,6 +278,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   if (isoExercises) taxpayer.isoExercises = isoExercises;
   // Health savings account (Form 8889, W-2 code W, Form 1099-SA; last draws).
   addHsa(faker, taxpayer, HSA_LIMIT[taxYear], HSA_CATCH_UP);
+  addExtras(faker, taxpayer);
   return taxpayer;
 }
 
