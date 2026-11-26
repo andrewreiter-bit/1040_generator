@@ -18,6 +18,7 @@ import { addHsa } from "./hsa";
 import { addExtras } from "./extras";
 import { buildCapitalSales } from "./capital";
 import { buildItemized, buildRental, buildSsa1099, makeRentalLoss } from "./schedules-ae";
+import { zipInState } from "./zip";
 
 // ─── Custom Generators ────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ function buildW2(faker: Faker, state: string, taxYear: number): W2Record {
     employerStreet: faker.location.streetAddress(),
     employerCity: faker.location.city(),
     employerState: state,
-    employerZip: faker.location.zipCode(),
+    employerZip: zipInState(state, faker.location.zipCode()),
     wages,
     federalWithheld,
     socialSecurityWages: ssWages,

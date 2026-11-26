@@ -10,6 +10,7 @@ import { Faker } from "@faker-js/faker";
 import { CareProvider, DependentCare, FakeTaxpayer } from "./taxpayer";
 import { includedW2s } from "../tax/household";
 import { isQualifyingCarePerson } from "../tax/dependent-care";
+import { cityStateZip } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const dollars = (faker: Faker, min: number, max: number) => round2(faker.number.float({ min, max, fractionDigits: 2 }));
@@ -21,7 +22,7 @@ function provider(faker: Faker): Omit<CareProvider, "amountPaid"> {
       ? `${faker.company.name()} ${faker.helpers.arrayElement(["Child Care Center", "Learning Center", "Kids Academy", "Early Learning"])}`
       : `${faker.person.firstName()} ${faker.person.lastName()}`,
     street: faker.location.streetAddress(),
-    city: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}`,
+    city: cityStateZip(faker),
     tin: center
       ? `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`
       : `${faker.number.int({ min: 100, max: 665 })}-${faker.string.numeric(2)}-${faker.string.numeric(4)}`,

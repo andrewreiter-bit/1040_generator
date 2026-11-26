@@ -16,6 +16,7 @@
  */
 import { Faker } from "@faker-js/faker";
 import { Education, EducationInstitution, EducationStudent, FakeTaxpayer } from "./taxpayer";
+import { cityStateZip } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const dollars = (faker: Faker, min: number, max: number) => round2(faker.number.float({ min, max, fractionDigits: 2 }));
@@ -24,7 +25,7 @@ function institution(faker: Faker): EducationInstitution {
   return {
     name: `${faker.location.city()} ${faker.helpers.arrayElement(["State University", "Community College", "College", "Institute of Technology"])}`,
     street: faker.location.streetAddress(),
-    city: `${faker.location.city()}, ${faker.location.state({ abbreviated: true })} ${faker.location.zipCode("#####")}`,
+    city: cityStateZip(faker),
     ein: `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`,
   };
 }
