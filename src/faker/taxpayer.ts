@@ -601,6 +601,8 @@ export interface FakeTaxpayer {
   mfsApartLast6Months?: boolean;
   /** MFS only: a written separation agreement or decree of separate maintenance, and not in the spouse's household at year end (§ 32(d)(2)(B)(ii)(II)). */
   mfsLegallySeparated?: boolean;
+  /** MFS only: paid more than half the cost of keeping up the home (Form 2441 "considered unmarried", § 21(e)(4)). */
+  mfsPaidOverHalfHomeCost?: boolean;
   /** Legally blind at year end (additional standard deduction). */
   blind?: boolean;
   spouseBlind?: boolean;

@@ -621,6 +621,15 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     checks.push({ phase: 2, id: "2441-lines-from-household", ok: !bad.length, detail: bad.join("; ") || undefined });
     tie(2, "2441-11-equals-sch3-2", n0(m41("line11")), n0(s3("line2")), "Form 2441 line 11 vs Schedule 3 line 2");
   }
+  // Separate filer with care expenses: the credit (and line A) only when considered unmarried
+  // (§ 21(e)(4): spouse not in the home for the last 6 months, over half the home's cost paid), recomputed here.
+  if (t.filingStatus === "MFS" && t.dependentCare) {
+    const unmarried = (!!t.mfsApartLast6Months || t.mfsLivedWithSpouse === false) && t.mfsPaidOverHalfHomeCost === true;
+    const credit = n0(s3("line2"));
+    const lineA = docs.f2441?.length ? m41("lineA") === "Yes" : false;
+    const ok = (unmarried || credit === 0) && (!docs.f2441?.length || lineA === unmarried);
+    checks.push({ phase: 2, id: "mfs-2441-only-considered-unmarried", ok, detail: `credit ${credit}, line A ${lineA}, considered unmarried ${unmarried}` });
+  }
   // ── Form 8863 (education credits), recomputed from the filled 1098-Ts ──────────────
   const e63 = (docs.f8863 ?? []).map((run) => keyed(run, "f8863"));
   if (e63.length) {

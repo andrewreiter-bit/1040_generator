@@ -83,6 +83,17 @@ export function separatedSpouse(t: FakeTaxpayer): boolean {
   return t.filingStatus === "MFS" && (!!t.mfsApartLast6Months || !!t.mfsLegallySeparated || t.mfsLivedWithSpouse === false);
 }
 
+/**
+ * Considered unmarried for the dependent care credit (§ 21(e)(4); Form 2441 instructions, "Married
+ * Persons Filing Separately"): a separate filer whose spouse didn't live in the home during the last
+ * 6 months of the year (apart all year counts), who paid more than half the cost of keeping up the
+ * home, and whose home was the qualifying person's main home for more than half the year (every
+ * qualifying person's is). Unlike EIC, a written separation agreement alone doesn't count.
+ */
+export function mfsUnmarriedForCare(t: FakeTaxpayer): boolean {
+  return t.filingStatus === "MFS" && (!!t.mfsApartLast6Months || t.mfsLivedWithSpouse === false) && t.mfsPaidOverHalfHomeCost === true;
+}
+
 export function eicChildren(t: FakeTaxpayer): Dependent[] {
   return t.dependents.filter((d) => qualifiesForEic(d, t));
 }

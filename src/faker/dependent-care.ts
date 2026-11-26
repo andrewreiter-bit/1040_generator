@@ -29,13 +29,14 @@ function provider(faker: Faker): Omit<CareProvider, "amountPaid"> {
   };
 }
 
-export function buildDependentCare(faker: Faker, t: FakeTaxpayer): DependentCare | undefined {
+/** `allowMfs`: the profile extras draw care for separated separate filers (Form 2441 line A). */
+export function buildDependentCare(faker: Faker, t: FakeTaxpayer, allowMfs = false): DependentCare | undefined {
   const kids = t.dependents.map((d, i) => ({ d, i })).filter(({ d, i }) => t.taxYear - d.birthYear < 13 && isQualifyingCarePerson(t, i));
   const w2s = includedW2s(t);
   const works = (who: "primary" | "spouse") =>
     w2s.some((w) => (w.employee ?? "primary") === who && w.wages > 0)
     || (t.scheduleCs ?? []).some((b) => (b.owner ?? "primary") === who && b.grossReceipts > 0);
-  const eligible = kids.length > 0 && t.filingStatus !== "MFS" && works("primary") && (t.filingStatus !== "MFJ" || works("spouse"));
+  const eligible = kids.length > 0 && (t.filingStatus !== "MFS" || allowMfs) && works("primary") && (t.filingStatus !== "MFJ" || works("spouse"));
   if (!faker.datatype.boolean({ probability: 0.45 }) || !eligible) return undefined;
   const expenses = kids.map(({ i }) => ({ dependentIndex: i, amount: dollars(faker, 1500, 9000) }));
   const total = round2(expenses.reduce((s, e) => s + e.amount, 0));
