@@ -10,6 +10,9 @@
  *   filers under 60 with wages, not filing separately, with no code 1 distribution.
  * - Marketplace coverage on a separate return without the line A exception (Form 8962 repays
  *   the advance payments): ~25% of separate filers under 65 without a policy.
+ * - Separated spouse: separate filers (90% of those with an EIC child, 40% of the rest) live apart
+ *   from the spouse for the last 6 months (60%) or are legally separated (40%), so EIC with a
+ *   qualifying child is allowed (§ 32(d)(2)).
  * - Part-year HSA coverage (Form 8889 Line 3 Limitation Chart): ~25% of HSA holders, 6–11
  *   months; skipped when the employer's code W is over the prorated limit, and the holder's
  *   contribution is capped at the prorated limit less code W (never an excess).
@@ -29,6 +32,7 @@
 import { Faker } from "@faker-js/faker";
 import { FakeTaxpayer, Retirement1099R } from "./taxpayer";
 import { HSA_CATCH_UP, HSA_LIMIT } from "../config/tax-year";
+import { eicChildren } from "../tax/household";
 import { cityStateZip, zipInState } from "./zip";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -82,6 +86,8 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   const casShare = faker.number.float({ min: 0.3, max: 0.9, fractionDigits: 3 });
   const casFema = `DR-${faker.number.int({ min: 4600, max: 4899 })}`;
   const casDesc = faker.helpers.arrayElement(["Detached garage", "Personal vehicle", "Home contents", "Storage shed"]);
+  const sepRoll = faker.number.float({ min: 0, max: 1, fractionDigits: 4 });
+  const sepLegal = faker.datatype.boolean({ probability: 0.4 });
 
   // ── IRA basis (Form 8606) ──
   const rs = t.retirement1099Rs ?? [];
@@ -151,6 +157,14 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
       dateWon: `${String(gambleMonth).padStart(2, "0")}/${String(gambleDay).padStart(2, "0")}/${y}`, wagerType: wager[kind],
       winnings: gambleAmt, federalWithheld: kind === "Lottery" && gambleAmt > 5000 ? round2(gambleAmt * 0.24) : 0,
     }];
+  }
+
+  // ── Separated spouse (EIC on a separate return, § 32(d)(2)) ──
+  // Living apart for the last 6 months, or legally separated; either way the spouses shared a home
+  // earlier in the year (mfsLivedWithSpouse stays unset), so only EIC and the separated-spouse box change.
+  if (t.filingStatus === "MFS" && sepRoll < (eicChildren(t).length ? 0.9 : 0.4)) {
+    if (sepLegal) t.mfsLegallySeparated = true;
+    else t.mfsApartLast6Months = true;
   }
 
   // ── Itemizers: reallocations that keep Schedule A line 17 ──

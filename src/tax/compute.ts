@@ -25,7 +25,7 @@ import {
   taxOnIncome,
   yearConstants,
 } from "../config/tax-year";
-import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount } from "./household";
+import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount, separatedSpouse } from "./household";
 import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
 import { QbiRow,
   BusinessDeductions, Form8995ALines, Form8995Lines, ScheduleCLines, ScheduleSELines,
@@ -172,6 +172,10 @@ export interface ReturnLines {
   totalWithholding: number;    // 25d
   estimatedPayments: number;   // 26
   earnedIncomeCredit: number;  // 27 (2025: 27a)
+  /** MFS filer who meets the separated-spouse test (§ 32(d)(2)): the 2025 Form 1040 Dependents-section box. */
+  separatedSpouse: boolean;
+  /** EIC claimed on a separate return under the separated-spouse rule: the 2023/2024 Schedule EIC box. */
+  eicSeparatedSpouse: boolean;
   additionalChildTaxCredit: number; // 28
   scheduleThreePayments: number; // 31
   /** 29: refundable American opportunity credit (Form 8863 line 8). */
@@ -561,11 +565,14 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // Pub 596 Worksheet 1: interest, dividends, capital gain net income and net passive (rental) income.
   const investmentIncome = round2(taxableInterest + ordinaryDividends + Math.max(0, capitalGain) + Math.max(0, rentalIncome));
   let eic = earnedIncomeCredit(t, nEic, earnedIncome, agi, investmentIncome);
-  if (t.filingStatus === "MFS" && nEic > 0) {
-    // A separate return gets EIC only under the separated-spouse rule (§ 32(d)(2)), which the
-    // model can't decide. No credit is claimed; it's flagged only when the rule would matter.
-    if (eic.credit > 0) unsupported.push("EIC on a separate return with a qualifying child (separated-spouse rule, § 32(d)(2))");
-    eic = { ...eic, fromEarnedIncome: 0, fromAgi: null, credit: 0, reasonNone: "married filing separately (separated-spouse rule not modelled)" };
+  // A separate return gets EIC only under the separated-spouse rule (§ 32(d)(2)): a qualifying child
+  // who lived with the filer more than half the year (every EIC child does) and the filer living
+  // apart from the spouse for the last 6 months, or legally separated. The filer then isn't treated
+  // as married, so the non-joint column applies. Without a qualifying child, no EIC on a separate
+  // return (credits.ts).
+  const sepSpouse = separatedSpouse(t);
+  if (t.filingStatus === "MFS" && nEic > 0 && !sepSpouse) {
+    eic = { ...eic, fromEarnedIncome: 0, fromAgi: null, credit: 0, reasonNone: "married filing separately, not a separated spouse (§ 32(d)(2))" };
   }
 
   // ── Additional child tax credit (line 28, Schedule 8812 Part II) ─────────
@@ -597,7 +604,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     tax, scheduleTwoPartOne, form6251: f6251, alternativeMinimumTax, excessAdvancePtc, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
-    earnedIncomeCredit: eic.credit, additionalChildTaxCredit: partII.credit, americanOpportunityCredit,
+    earnedIncomeCredit: eic.credit, separatedSpouse: sepSpouse, eicSeparatedSpouse: t.filingStatus === "MFS" && eic.credit > 0, additionalChildTaxCredit: partII.credit, americanOpportunityCredit,
     form8863: f8863?.required ? f8863 : undefined,
     scheduleThreePayments, refundableCredits, totalPayments, overpaid, refund: overpaid, amountOwed,
     scheduleC: scheduleCs, scheduleSE: scheduleSEs, businessDeductions: bizDed,

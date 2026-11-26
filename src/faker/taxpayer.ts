@@ -597,6 +597,10 @@ export interface FakeTaxpayer {
   ssa1099s?: SSA1099[];
   /** MFS only: lived with the spouse at any time during the year (Social Security base amount $0). Omitted = yes. */
   mfsLivedWithSpouse?: boolean;
+  /** MFS only: didn't have the same principal home as the spouse during the last 6 months of the year (§ 32(d)(2)(B)(ii)(I)). */
+  mfsApartLast6Months?: boolean;
+  /** MFS only: a written separation agreement or decree of separate maintenance, and not in the spouse's household at year end (§ 32(d)(2)(B)(ii)(II)). */
+  mfsLegallySeparated?: boolean;
   /** Legally blind at year end (additional standard deduction). */
   blind?: boolean;
   spouseBlind?: boolean;

@@ -107,7 +107,9 @@ function scheduleEic(taxYear: number): FieldMap {
 
   add(`${P1}${f(1)}`, "names", (_r, t) => namesOnReturn(t));
   add(`${P1}${f(2)}`, "ssn", (_r, t) => t.ssn);
-  if (!y25) add(`${P1}c1_1[0]`, "beforeYouBegin", () => OFF);
+  // 2023/2024: "If you are separated from your spouse, filing a separate return, and meet the
+  // requirements to claim the EIC ..., check here". 2025 moved it to Form 1040's Dependents section.
+  if (!y25) add(`${P1}c1_1[0]`, "separatedSpouse", (r) => checkIf(r.eicSeparatedSpouse));
   for (let i = 0; i < 3; i++) {
     const k = `child${i + 1}`;
     add(`${P1}${f(3 + i)}`, `${k}.name`, (_r, t) => (kid(t, i) ? `${kid(t, i).firstName} ${kid(t, i).lastName}` : BLANK), true);
