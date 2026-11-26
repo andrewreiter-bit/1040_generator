@@ -36,6 +36,7 @@ import { Rounder, rounderFor, sumWith } from "./rounding";
 import { CapitalResult, computeCapital } from "./capital";
 import { ScheduleALines, scheduleA } from "./itemized";
 import { Form4952Lines, form4952 } from "./investment-interest";
+import { ScheduleRLines, scheduleR } from "./elderly";
 import { ScheduleELines, scheduleE } from "./rental";
 import { Form8582Lines, PassiveClass, form8582, isRoyalty, isSelfRental, passiveClass } from "./passive";
 import { SocialSecurityLines, socialSecurityWorksheet } from "./social-security";
@@ -91,6 +92,7 @@ export interface Schedule3Lines {
   dependentCareCredit: number;  // 2 (Form 2441 line 11)
   educationCredit: number;      // 3 (Form 8863 line 19)
   saversCredit: number;         // 4 (Form 8880 line 12)
+  elderlyCredit: number;        // 6d (Schedule R line 22)
   nonrefundableCredits: number; // 8 → 1040 line 20
   excessSocialSecurity: number; // 11
   netPremiumTaxCredit: number;  // 9 (Form 8962 line 26)
@@ -99,7 +101,11 @@ export interface Schedule3Lines {
 }
 
 export interface ReturnLines {
-  wages: number;               // 1a / 1z
+  wages: number;               // 1a (W-2 box 1)
+  /** 1h: other earned income (disability pensions before minimum retirement age). 1z = 1a + 1h. */
+  otherEarnedIncome: number;
+  /** Schedule R (credit for the elderly or the disabled), when a box applies. */
+  scheduleR?: ScheduleRLines;
   taxableInterest: number;     // 2b
   qualifiedDividends: number;  // 3a
   ordinaryDividends: number;   // 3b
@@ -119,6 +125,8 @@ export interface ReturnLines {
   standardDeductionAmount: number;
   itemizes: boolean;
   scheduleA?: ScheduleALines;
+  /** Form 4684 Section A totals; filed even without itemizing (a qualified disaster loss raises the standard deduction). */
+  form4684?: ScheduleALines["form4684"];
   /** Form 4952, when the filer itemizes with investment interest. */
   form4952?: Form4952Lines;
   scheduleE?: ScheduleELines;
@@ -264,6 +272,10 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // ── Pensions, annuities and IRAs (lines 4a–5b) ───────────────────────────
   const retirement = retirementDistributions(t, R);
   const retirementIncome = round2(retirement.line4b + retirement.line5b);
+  unsupported.push(...retirement.unsupported);
+  // Line 1h: disability pensions before minimum retirement age are wages (earned income).
+  const otherEarnedIncome = round2(retirement.disabilityPension.primary + retirement.disabilityPension.spouse);
+  const line1z = round2(wages + otherEarnedIncome);
   if (retirement.needsForm5329) unsupported.push("code 1 early distribution next to another 1099-R code for the same person (Form 5329)");
 
   // ── Schedule C / SE ───────────────────────────────────────────────────────
@@ -309,7 +321,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     const passiveNet = sum(schEBase.columns.filter((_, i) => rentalClasses[i] !== "nonpassive").map((c) => c.net));
     const nonpassiveNet = sum(schEBase.columns.filter((c, i) => rentalClasses[i] === "nonpassive" && !(reProMp(c.property) && c.net < 0)).map((c) => c.net));
     const modifiedAgi = round2(
-      wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + businessIncome + unemployment + otherIncome + Math.max(0, passiveNet) + nonpassiveNet
+      line1z + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + businessIncome + unemployment + otherIncome + Math.max(0, passiveNet) + nonpassiveNet
       - (educatorExpenses + hsaDeduction + healthInsurance + earlyWithdrawalPenalty),
     );
     f8582 = form8582(t, schEBase.columns.map((c, i) => ({ net: c.net, cls: rentalClasses[i] })), modifiedAgi, R);
@@ -333,7 +345,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // without it first, then the deduction, then the Social Security worksheet again with it.
   // (Only exact when nobody is covered by a workplace plan or there are no benefits; the
   // other case is Pub 590-A Appendix B and is reported as unsupported.)
-  const otherIncome9 = round2(wages + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome);
+  const otherIncome9 = round2(line1z + taxableInterest + ordinaryDividends + retirementIncome + capitalGain + additionalIncome);
   const otherAdjustments = sum([educatorExpenses, hsaDeduction, seTaxDeduction, healthInsurance, earlyWithdrawalPenalty]);
   const ss0 = socialSecurityWorksheet(t, otherIncome9, otherAdjustments, R);
   const ira = iraDeduction(t, w2s, scheduleSEs, round2(otherIncome9 + ss0.taxable), otherAdjustments, ss0.line1 > 0, R);
@@ -381,8 +393,12 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const legacyItemized = !t.itemized && !t.takesStandardDeduction && t.itemizedDeductionTotal != null ? round2(t.itemizedDeductionTotal) : undefined;
   const itemizedAmount = schA?.line17 ?? legacyItemized ?? 0;
   // The larger of the two, or Schedule A when the filer elects to itemize (line 18) or must.
-  const itemizes = itemizedAmount > standardDeductionAmount || (!!schA && (schA.electToItemize || spouseItemizes));
-  const deduction = itemizes ? itemizedAmount : standardDeductionAmount;
+  // A net qualified disaster loss can be added to the standard deduction (Schedule A line 16
+  // instructions; Form 4684 line 15) when not itemizing.
+  const standardWithDisaster = round2(standardDeductionAmount + (schA?.qualifiedDisasterLoss ?? 0));
+  const itemizes = itemizedAmount > standardWithDisaster || (!!schA && (schA.electToItemize || spouseItemizes));
+  const deduction = itemizes ? itemizedAmount : standardWithDisaster;
+  if (schA) unsupported.push(...schA.casualtyUnsupported);
   // Form 4952 is filed (and its line 4g election made) only to claim the Schedule A deduction.
   const f4952 = itemizes ? f4952All : undefined;
   // Line 4g: elected gain isn't taxed at capital-gain rates (net capital gain first, then dividends).
@@ -437,7 +453,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const taxableIncome = Math.max(0, round2(agi - totalDeductions));
 
   // ── Tax ───────────────────────────────────────────────────────────────────
-  if (f4952?.line4g && qbi) unsupported.push("Form 4952 line 4g election with a QBI deduction (Form 8995 net capital gain)");
+  // Form 8995/8995-A net capital gain isn't reduced by Form 4952 line 4g: Reg. 1.199A-1(b)(3) takes
+  // § 1222(11) net capital gain plus qualified dividends; § 1(h)(2)'s reduction is for § 1(h) only.
   const tax = prefDividends > 0 || prefGain > 0
     ? qdcgTax(taxableIncome, prefDividends, prefGain, t, R)
     : R(taxOnIncome(taxableIncome, t.taxYear, t.filingStatus));
@@ -472,23 +489,33 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // Credit order: Form 2441 (Schedule 3 line 2) is limited by line 18; Form 8863 (line 3) by
   // line 18 less line 2; Form 8880 (line 4) by line 18 less lines 1–3; Schedule 8812 Credit
   // Limit Worksheet A then takes lines 2, 3 and 4 off line 18 before the child tax credit.
-  const f2441 = form2441(t, w2s, scheduleSEs, agi, taxBeforeCredits, R);
+  const f2441 = form2441(t, w2s, scheduleSEs, agi, taxBeforeCredits, R, retirement.disabilityPension);
   if (f2441) unsupported.push(...f2441.unsupported);
   const dependentCareCredit = f2441?.line11 ?? 0;
-  const f8863 = t.filingStatus === "MFS" ? undefined : form8863(t, agi, taxBeforeCredits, dependentCareCredit, R);
+  // Schedule R (Schedule 3 line 6d): limited to line 18 less Schedule 3 lines 1, 2 and 6l, and
+  // taken off the limits of the credits after it.
+  const ageAt = (dob: string | null | undefined) => t.taxYear - Number((dob ?? "").split("/")[2]);
+  const schR = scheduleR(t, {
+    ages: { primary: ageAt(t.dateOfBirth), spouse: t.filingStatus === "MFJ" ? ageAt(t.spouseDateOfBirth) : null },
+    disabilityIncome: retirement.disabilityPension,
+    nontaxableSocialSecurity: round2(socialSecurity.line1 - socialSecurity.taxable),
+    agi, creditLimit: round2(taxBeforeCredits - dependentCareCredit),
+  }, R);
+  const elderlyCredit = schR?.line22 ?? 0;
+  const f8863 = t.filingStatus === "MFS" ? undefined : form8863(t, agi, taxBeforeCredits, round2(dependentCareCredit + elderlyCredit), R);
   const educationCredit = f8863?.line19 ?? 0;
   const americanOpportunityCredit = f8863?.line8 ?? 0;
-  const f8880 = form8880(t, w2s, retirement.records, agi, Math.max(0, round2(taxBeforeCredits - dependentCareCredit - educationCredit)), R);
+  const f8880 = form8880(t, w2s, retirement.records, agi, Math.max(0, round2(taxBeforeCredits - dependentCareCredit - elderlyCredit - educationCredit)), R);
   const saversCredit = f8880.line12;
-  const ctcTaxLimit = Math.max(0, round2(taxBeforeCredits - dependentCareCredit - educationCredit - saversCredit));
+  const ctcTaxLimit = Math.max(0, round2(taxBeforeCredits - dependentCareCredit - educationCredit - saversCredit - elderlyCredit));
   const childAndOtherDependentCredit = Math.min(creditAfterPhaseout, ctcTaxLimit);
-  const scheduleThreeCredits = round2(dependentCareCredit + educationCredit + saversCredit);
+  const scheduleThreeCredits = round2(dependentCareCredit + educationCredit + saversCredit + elderlyCredit);
   const totalCredits = round2(childAndOtherDependentCredit + scheduleThreeCredits);
   const taxAfterCredits = Math.max(0, round2(taxBeforeCredits - totalCredits));
 
   // ── Schedule 2 Part II ────────────────────────────────────────────────────
   const f8959 = form8959(t.filingStatus, w2s, scheduleSEs, R);
-  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0, round2(niiRental - rentalIncome), t.niitAdditionalModifications ?? 0);
+  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0, round2(niiRental - rentalIncome), t.niitAdditionalModifications ?? 0, t.niitStateIncomeTax ?? 0);
   const seTax = sum(scheduleSEs.map((s) => s.seTax));
   const earlyDistributionTax = retirement.additionalTax;
   // Line 13 (Schedule 2 instructions): "box 12 of Form W-2 with codes A and B or M and N".
@@ -519,7 +546,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
   const excessSs = excessSocialSecurity(t, w2s, R).total;
   const schedule3: Schedule3Lines = {
-    dependentCareCredit, educationCredit, saversCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs,
+    dependentCareCredit, educationCredit, saversCredit, elderlyCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs,
     netPremiumTaxCredit: f8962?.line26 ?? 0, otherPayments: round2(excessSs + (f8962?.line26 ?? 0)),
     required: excessSs > 0 || scheduleThreeCredits > 0 || (f8962?.line26 ?? 0) > 0,
   };
@@ -529,7 +556,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // Earned income (EIC Worksheet B / Schedule 8812 earned income worksheet): wages plus
   // net self-employment earnings, i.e. Schedule SE line 3 less the line 13 deduction.
   const seEarned = sum(scheduleSEs.map((s) => s.combined - s.deduction));
-  const earnedIncome = round2(wages + seEarned);
+  const earnedIncome = round2(line1z + seEarned);
   const nEic = eicChildren(t).length;
   // Pub 596 Worksheet 1: interest, dividends, capital gain net income and net passive (rental) income.
   const investmentIncome = round2(taxableInterest + ordinaryDividends + Math.max(0, capitalGain) + Math.max(0, rentalIncome));
@@ -559,9 +586,12 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const amountOwed = Math.max(0, round2(totalTax - totalPayments));
 
   const result: ReturnLines = {
-    wages, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
+    wages, otherEarnedIncome, scheduleR: schR, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
     capitalGain, netCapitalGain, scheduleDRequired, capital, retirement, socialSecurity, standardDeductionAmount, itemizes,
-    scheduleA: itemizes ? schA : undefined, form4952: f4952, scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
+    // Form 4952 is also filed without itemizing when the § 163(d) limit alone disallows the interest
+    // (line 8 is $0), to carry line 7 forward.
+    scheduleA: itemizes ? schA : undefined, form4684: schA?.form4684,
+    form4952: f4952 ?? (f4952All && f4952All.line8 === 0 && f4952All.line7 > 0 && !f4952All.line4g ? f4952All : undefined), scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
     youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     // Form 8962 is filed only to claim the PTC or reconcile advance payments.
     tax, scheduleTwoPartOne, form6251: f6251, alternativeMinimumTax, excessAdvancePtc, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,

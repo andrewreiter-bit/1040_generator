@@ -72,7 +72,8 @@ function scheduleA(taxYear: number): FieldMap {
     "12": (r) => moneyOrBlank(a(r)?.line12),
     "13": (r) => moneyOrBlank(a(r)?.line13),
     "14": (r) => moneyOrBlank(a(r)?.line14),
-    "16.type1": (r) => (a(r)?.line16 ? "Gambling losses" : BLANK),
+    "15": (r) => moneyOrBlank(a(r)?.line15),
+    "16.type1": (r) => (a(r)?.line16 ? [a(r)!.gamblingLosses ? "Gambling losses" : "", a(r)!.qualifiedDisasterLoss ? "Net qualified disaster loss" : ""].filter(Boolean).join("; ") : BLANK),
     "16": (r) => moneyOrBlank(a(r)?.line16),
     "17": (r) => (a(r) ? money(a(r)!.line17) : BLANK),
   };

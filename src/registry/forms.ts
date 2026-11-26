@@ -52,7 +52,8 @@ export const FORM_REGISTRY: FormEntry[] = [
   // ═══════════════════════════════════════════════════════════════════════════
 
   irs("f1040", "Form 1040", "core", "U.S. Individual Income Tax Return"),
-  irs("f1040sr", "Form 1040-SR", "core", "U.S. Tax Return for Seniors"),
+  // irs.gov serves Schedule R (not Form 1040-SR, whose file is f1040s.pdf) at f1040sr.pdf.
+  irs("f1040sr", "Schedule R (Form 1040)", "schedule", "Credit for the Elderly or the Disabled"),
   irs(
     "f1040nr",
     "Form 1040-NR",

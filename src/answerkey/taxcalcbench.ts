@@ -14,7 +14,7 @@
  */
 import fs from "fs";
 import path from "path";
-import { CapitalAssetSale, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, IsoExercise, ItemizedDeductions, RentalProperty, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
+import { CapitalAssetSale, CasualtyEvent, Dependent, DistributionCode, Education, EducationStudent, FakeTaxpayer, FilingStatus, GamblingWinnings, HsaAccount, IsoExercise, ItemizedDeductions, RentalProperty, Retirement1099R, ScheduleCBusiness, W2Record } from "../faker/taxpayer";
 import { ReturnLines } from "../tax/compute";
 import { isQualifyingChild } from "../tax/household";
 import { mergeSourceDocuments } from "./ty25-documents";
@@ -283,9 +283,15 @@ const SUPPORTED_PATHS: RegExp[] = [
   // TY25 Schedule A. deduction_type is the preparer's note of the result; the override decides.
   /^deduction_type$/, /^deduction_override$/, /^mfs_deduction$/,  // values checked in toTaxpayer
   /^ty25_unplaced_state_local_income_tax$/,                         // checked when itemizing
+  /^ty25_ssns$/, /^ty25_prior_relationships$/,                      // from the prior-year 1040
   // TY25 Form 1098 (read from the PDFs), Form 4952 and Form 6251 ISO answers.
   /^f1098\[\]\.(mortgage_interest|outstanding_principal|points)$/,
   /^f4952\.(currentYearExpenses|COfromBefore|qualDivLineElectedInvest)$/,
+  // Form 4952 lines given as answers: checked against the computed lines (postCheck).
+  /^f4952\.(grossIncomeLine4a|qualDivLine4b|disposedNetGainLine4d|netCapitalGainLine)$/,
+  /^f8960\.stateIncTax$/, /^addtl_income\.OtherGamblingIncomeAmt(TP|SP)$/,
+  // Form 8283 (noncash gifts): informational once its values agree with Schedule A line 12 (postCheck).
+  /^f8283list\[\]\.(FMV|FMVmethod|acquireHow|acquireVarious|acquireDate|cost|donateDate|donee(Name|Address|City|State|Zip)|itemDescription|itemType)$/,
   /^f6251\.stockOption$/,
   // TY25: Form 8960 line 10; a spouse's student loan interest (joint returns; not deductible
   // separately); and the business-property screener for a plain sale. The dataset has no answers
@@ -299,9 +305,19 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^sche_gen\.(REProfessional|require1099|require1099filed)$/,
   /^scherentslist\[\]\.(OWNER|activeParticipation|addrUS(AddressLine1|City|State|ZIPCode)|advertising|legal|atRisk|autoExp|isQBI|otherIncome|personalUseDays|propertyType|rentalDays|rentalSold|qualified_business|former_employer|specified_service|material_participant|royalty_passive_portfolio|noFormDepreciation|sch_e_depr_amort_expense_(screener|method))$/,
   // Whether the other parent of a dependent is the current spouse: no effect on a joint return.
-  /^irs1040\.dependent_detail\[\]\.current_spouse_is_parent$/,
+  /^irs1040\.dependent_detail\[\]\.(current_spouse_is_parent|dependent_disabled|uuid|child_lived_with_longest_time)$/,
+  /^irs1040\.(tp|sp)_disability$/, /^check_sch_r_calc$/, /^basic3\.FilingStatus5YSDIED$/,
+  /^irs2441\.qualifying_person_grp\[\]\.person$/,
+  // TY25 1099-R supplements and Form 8606 answers (f8606_di's values duplicate f8606_ui's and aren't used).
+  /^f1099r\[\]\.(nonStandard|OWNER|supplemental_inputs\.(typeOfIRA|rothConvAmount|notRetirementAge))$/,
+  /^irs1099_r\[\]\.irr_amount_box10$/,
+  /^f8606_ui\.(tradValue|sepSimpleValue|tradiIRAbasis)(TP|SP)$/,
+  /^f8606_di\.(grossIRADistLessRolloverOver|tradIRADistLessRolloverOver|tradValue|sepSimpleValue)(TP|SP)$/,
   /^scha_tax\.(stateTaxOrSalesTax|salesTaxesPaid|taxRE|taxPP)$/,
-  /^scha_gft\.(cash60|cash30|nonCash50|nonCash30|contrib30CapGain)(CO)?$/, /^scha_gft\.noncash50CO$/,
+  /^scha_gft\.(cash60|cash30|nonCash50|nonCash30|contrib30CapGain)(CO)?$/, /^scha_gft\.noncash50CO$/, /^scha_gft\.qualifiedContrCash$/, /^scha_oth\.miscNot2(Type|Amt)\d$/,  // line 16: only gambling losses (checked)
+  // TY25 Form 4684 Section A: personal-use property per casualty event (values checked in toTaxpayer).
+  /^f4684list\[\]\.(afterFMV|beforeFMV|casualtyInstance|cost|insurance|propertyAcquisitionDate|propertyLocationUS(AddressLine1|City|State|ZIPCode)|propertyType|propertyUse)$/,
+  /^f4684caslist\[\]\.(FEMADisasterDecNum|disasterDate|disasterName|lossType)$/,
   /^med_exp\.(medExpDrDentist|medExpPrescYesSCHA)(TP|SP)$/,
   // Married filing separately: living apart / legal separation (checked against the computed return).
   /^basic3\.(legallySeparated|livedApartFromSpouse|livedWithSpouse6Mos)$/,
@@ -328,6 +344,7 @@ const FILING_STATUS: Record<string, FilingStatus> = {
   married_separately: "MFS",
   head_of_household: "HOH",
   qualifying_surviving_spouse: "QSS",
+  qualifying_widower: "QSS",
 };
 
 const RELATIONSHIP: Record<string, Dependent["relationship"]> = {
@@ -383,8 +400,11 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   if (!status) outOfScope.add(`filing_status=${val(f1040, "filing_status")}`);
 
   // Each listed person with the answers that decide whether they are a dependent at all.
-  const listed = list(f1040, "dependent_detail").map((d) => {
-    const rel = String(val(d, "dependent_relationship") ?? "");
+  // TY25 gives no relationship; the prior-year return lists one per dependent (same order).
+  const priorRel = String(val(rd, "ty25_prior_relationships") ?? "").split("|").filter(Boolean);
+  const depRows = list(f1040, "dependent_detail");
+  const listed = depRows.map((d, di) => {
+    const rel = String(val(d, "dependent_relationship") ?? (priorRel.length === depRows.length ? priorRel[di] : ""));
     if (rel && !RELATIONSHIP[rel]) outOfScope.add(`dependent relationship "${rel}"`);
     if (val(d, "dependent_ssn_itin_atin") === false) outOfScope.add("dependent without an SSN/ITIN/ATIN");
     const monthsInUs = val(d, "dependent_months_lived_in_us");
@@ -407,7 +427,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     const citizenOrResident =
       val(d, "dependent_us_citizen_national_or_resident_alien") === true ||
       val(d, "dependent_us_citizen_national_resident_alien_or_canada_mexico_resident") === true;
-    return { dep, citizenOrResident, supportedByTp: val(d, "dependent_supported_by_tp") };
+    const longest = val(d, "child_lived_with_longest_time");
+    if (longest !== undefined && longest !== "taxpayer") outOfScope.add(`child lived longer with "${longest}" (tie-breaker)`);
+    return { dep, citizenOrResident, supportedByTp: val(d, "dependent_supported_by_tp"), uuid: String(val(d, "uuid") ?? "") };
   });
 
   const w2Records: W2Record[] = list(rd, "w2").map((w) => {
@@ -573,16 +595,34 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     amountPaid: num(val(p, "paid_to_provider")),
   }));
   const careCarryover = num(val(rd.irs2441, "carryover"));
+  // TY25 names the qualifying person as "dependent_detail#<uuid>"; resolved to a dependent below.
+  const careRefs = list(rd.irs2441, "qualifying_person_grp").map((q) => String(val(q, "person") ?? "").replace(/^dependent_detail#/, ""));
   const careExpenses = list(rd.irs2441, "qualifying_person_grp").map((q) => ({ dependentIndex: 0, amount: num(val(q, "qualifying_expenses_paid")) }));
   const dependentCare = careProviders.length || careCarryover || careExpenses.length
     ? { providers: careProviders, expenses: careExpenses, priorYearExpensesPaid: careCarryover || undefined }
     : undefined;
-  const CODES = new Set<string>(["1", "2", "7", "G", "Q"]);
-  const retirement1099Rs = list(rd, "irs1099_r").map((x): Retirement1099R => {
+  const CODES = new Set<string>(["1", "2", "3", "4", "7", "C", "G", "Q"]);
+  // TY25: the PDFs give the boxes (ty25-documents.ts); f1099r[i] adds the owner, the IRA type,
+  // any Roth conversion and whether a disability pension came before retirement age.
+  const f1099rExtra = list(rd, "f1099r");
+  const conversions = { primary: 0, spouse: 0 };
+  const retirement1099Rs = list(rd, "irs1099_r").map((x, i): Retirement1099R => {
     const code = String(val(x, "f1099_r_distribution_cd_input") ?? "");
     if (!CODES.has(code)) outOfScope.add(`Form 1099-R distribution code "${code}"`);
+    const extra = f1099rExtra[i];
+    const sup = val(extra, "supplemental_inputs");
+    if (extra && val(extra, "nonStandard") !== undefined && val(extra, "nonStandard") !== "S") outOfScope.add("non-standard Form 1099-R");
+    const iraType = String(val(sup, "typeOfIRA") ?? "");
+    if (iraType && iraType !== "T") outOfScope.add(`Form 1099-R IRA type "${iraType}"`);
+    if (num(val(x, "irr_amount_box10")) && iraType !== "T" && val(x, "irasepsimple_ind_input") !== true) outOfScope.add("Form 1099-R box 10 (in-plan Roth rollover within 5 years)");
+    const owner = val(extra, "OWNER") ?? val(x, "who_applies_to");
+    const who: "primary" | "spouse" = owner === "spouse" ? "spouse" : "primary";
+    conversions[who] += num(val(sup, "rothConvAmount"));
+    const disabilityEarly = val(sup, "notRetirementAge") === true;
+    if (disabilityEarly && code !== "3") outOfScope.add("disability pension before retirement age without code 3");
     return {
-      recipient: val(x, "who_applies_to") === "spouse" ? "spouse" : "primary",
+      recipient: who,
+      disabilityBeforeRetirementAge: disabilityEarly || undefined,
       payerName: String(val(x, "payer_name_business_name_input") ?? ""),
       payerTin: String(val(x, "payer_ein_input") ?? ""),
       payerStreet: String(val(x, "payer_us_address_input") ?? ""),
@@ -633,7 +673,11 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     }
     dependents.push(dep);
   }
-  if (dependentCare?.expenses.length && (list(f1040, "dependent_detail").length !== 1 || dependents.length !== 1)) {
+  // Resolve TY25 "dependent_detail#<uuid>" references; otherwise only a single dependent is safe.
+  const uuids = listed.filter((l) => dependents.includes(l.dep)).map((l) => l.uuid);
+  const resolved = careRefs.length > 0 && careRefs.every((u) => u && uuids.includes(u));
+  if (resolved && dependentCare) dependentCare.expenses.forEach((e, i) => { e.dependentIndex = uuids.indexOf(careRefs[i]); });
+  if (dependentCare?.expenses.length && !resolved && (list(f1040, "dependent_detail").length !== 1 || dependents.length !== 1)) {
     outOfScope.add("Form 2441 expenses with several dependents (the input's person references can't be resolved)");
   } else if (dependentCare && !dependentCare.expenses.length && dependentCare.providers.some((p) => p.amountPaid > 0)
     && dependents.some((d) => taxYear - d.birthYear < 13 || (d.disabled && d.monthsInHome > 6))) {
@@ -707,11 +751,29 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   };
   const hsaTp = hsaPerson("TP"), hsaSp = married ? hsaPerson("SP") : undefined;
   const hsa = hsaTp || hsaSp ? { primary: hsaTp, spouse: hsaSp } : undefined;
+  // Gambling income without a Form W-2G (Schedule 1 line 8b).
+  const otherGambling = (["TP", "SP"] as const).map((sfx) => ({ sfx, amount: num(val(rd.addtl_income, `OtherGamblingIncomeAmt${sfx}`)) })).filter((x) => x.amount);
   const gamblingWinnings: GamblingWinnings[] = list(rd, "wg2").map((g) => ({
     recipient: val(g, "w2g_who_applies_to") === "spouse" ? "spouse" : "primary",
     payerName: String(val(g, "w2g_payer") ?? ""), payerTin: "",
     winnings: num(val(g, "w2g_winnings")), federalWithheld: num(val(g, "w2g_fed_wh")),
   }));
+  for (const x of otherGambling) gamblingWinnings.push({ recipient: x.sfx === "SP" ? "spouse" : "primary", payerName: "", payerTin: "", winnings: x.amount, federalWithheld: 0 });
+  // Form 4952 lines the input states: they must agree with what the engine figures.
+  const f4952Stated: Array<[string, (r: ReturnLines) => number | undefined]> = [
+    ["grossIncomeLine4a", (r) => r.form4952?.line4a], ["qualDivLine4b", (r) => r.form4952?.line4b],
+    ["disposedNetGainLine4d", (r) => r.form4952?.line4d], ["netCapitalGainLine", (r) => r.form4952?.line4e],
+  ];
+  for (const [k, pick] of f4952Stated) {
+    const stated = val(rd.f4952, k);
+    if (stated === undefined) continue;
+    postChecks.push((r) => (Math.round(pick(r) ?? 0) !== num(stated) ? `Form 4952 ${k} ${stated} vs computed ${Math.round(pick(r) ?? 0)}` : undefined));
+  }
+  const f8283 = list(rd, "f8283list");
+  if (f8283.length) {
+    const fmv = f8283.reduce((a: number, x) => a + num(val(x, "FMV")), 0);
+    postChecks.push((r) => (r.scheduleA && Math.round(r.scheduleA.line12) !== fmv ? `Form 8283 total ${fmv} vs Schedule A line 12 ${Math.round(r.scheduleA.line12)}` : undefined));
+  }
   // TY25 Schedule A. "maximize_deduction" takes the larger of standard and itemized (us-004 notes
   // "standard" yet its expected return itemizes the larger amount); "force_itemized" elects to
   // itemize a smaller amount (line 18).
@@ -721,7 +783,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   if (mfsDeduction !== undefined && !["spouse_did_not_file", "spouse_itemized", "spouse_standard"].includes(String(mfsDeduction))) outOfScope.add(`mfs_deduction=${mfsDeduction}`);
   const tax = rd.scha_tax, gft = rd.scha_gft, med = rd.med_exp, oth = rd.scha_oth;
   let itemized: ItemizedDeductions | undefined;
-  if (override !== undefined || tax || gft || med || oth || list(rd, "f1098").length || rd.f4952) {
+  if (override !== undefined || tax || gft || med || oth || list(rd, "f1098").length || rd.f4952 || list(rd, "f4684list").length) {
     const choice = val(tax, "stateTaxOrSalesTax");
     if (choice !== undefined && choice !== "L" && choice !== "G") outOfScope.add(`scha_tax.stateTaxOrSalesTax=${choice}`);
     // Line 16: only gambling losses are modelled.
@@ -738,6 +800,22 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     const limit = status === "MFS" ? 375000 : 750000;
     if (f1098s.reduce((a: number, x) => a + num(val(x, "outstanding_principal")), 0) > limit) outOfScope.add("home mortgage over the § 163(h)(3) limit (Pub 936)");
     const mortgage = f1098s.reduce((a: number, x) => a + num(val(x, "mortgage_interest")) + num(val(x, "points")), 0);
+    // Form 4684: event i (f4684caslist[i]) holds the f4684list items with casualtyInstance i + 1.
+    const KIND: Record<string, CasualtyEvent["kind"]> = { F: "federal", Q: "qualified", N: "other" };
+    const casualtyEvents: CasualtyEvent[] = list(rd, "f4684caslist").map((e, i) => {
+      const kind = KIND[String(val(e, "lossType") ?? "")];
+      if (!kind) outOfScope.add(`Form 4684 loss type "${val(e, "lossType")}"`);
+      const items = list(rd, "f4684list").filter((x) => String(val(x, "casualtyInstance") ?? "") === String(i + 1));
+      items.forEach((x) => { if (val(x, "propertyUse") !== "P") outOfScope.add("Form 4684 business or income-producing property (Section B)"); });
+      return { kind: kind ?? "other", description: String(val(e, "disasterName") ?? ""),
+        femaNumber: val(e, "FEMADisasterDecNum") ? String(val(e, "FEMADisasterDecNum")) : undefined,
+        items: items.map((x) => ({
+          basis: num(val(x, "cost")), fmvBefore: num(val(x, "beforeFMV")), fmvAfter: num(val(x, "afterFMV")), insurance: num(val(x, "insurance")),
+          description: String(val(x, "propertyType") ?? ""), location: [val(x, "propertyLocationUSAddressLine1"), val(x, "propertyLocationUSCity"), val(x, "propertyLocationUSState")].filter(Boolean).join(", "),
+          zip: String(val(x, "propertyLocationUSZIPCode") ?? ""), dateAcquired: isoToUs(val(x, "propertyAcquisitionDate")),
+        })) };
+    });
+    if (list(rd, "f4684list").some((x) => !list(rd, "f4684caslist")[Number(val(x, "casualtyInstance")) - 1])) outOfScope.add("Form 4684 item without its casualty event");
     const carry = ["cash60CO", "cash30CO", "nonCash30CO", "noncash50CO", "contrib30CapGainCO"].reduce((a, k) => a + num(val(gft, k)), 0);
     itemized = {
       medicalExpenses: ["medExpDrDentistTP", "medExpDrDentistSP", "medExpPrescYesSCHATP", "medExpPrescYesSCHASP"].reduce((a, k) => a + num(val(med, k)), 0) || undefined,
@@ -746,12 +824,24 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       realEstateTax: num(val(tax, "taxRE")) || undefined,
       personalPropertyTax: num(val(tax, "taxPP")) || undefined,
       mortgageInterest1098: mortgage || undefined,
+      // "Qualified Contr Cash" doesn't name its limit; taken as cash under the 60% limit (the
+      // limit check still reports the return if any limit could bind).
       charityByLimit: {
-        cash60: num(val(gft, "cash60")), cash30: num(val(gft, "cash30")), nonCash50: num(val(gft, "nonCash50")),
+        cash60: num(val(gft, "cash60")) + num(val(gft, "qualifiedContrCash")), cash30: num(val(gft, "cash30")), nonCash50: num(val(gft, "nonCash50")),
         nonCash30: num(val(gft, "nonCash30")), capitalGain30: num(val(gft, "contrib30CapGain")),
       },
       charityCarryover: carry || undefined,
       gamblingLosses: gamblingLosses || undefined,
+      casualtyEvents: casualtyEvents.length ? casualtyEvents : undefined,
+      noncashGifts: list(rd, "f8283list").length ? list(rd, "f8283list").map((x) => ({
+        donee: String(val(x, "doneeName") ?? ""),
+        doneeAddress: [val(x, "doneeAddress"), val(x, "doneeCity"), [val(x, "doneeState"), val(x, "doneeZip")].filter(Boolean).join(" ")].filter(Boolean).join(", "),
+        description: String(val(x, "itemDescription") ?? ""), dateContributed: isoToUs(val(x, "donateDate")),
+        dateAcquired: val(x, "acquireVarious") === true ? "Various" : isoToUs(val(x, "acquireDate")) || undefined,
+        howAcquired: val(x, "acquireHow") ? String(val(x, "acquireHow")) : undefined,
+        cost: val(x, "cost") !== undefined ? num(val(x, "cost")) : undefined, fmv: num(val(x, "FMV")),
+        method: val(x, "FMVmethod") ? String(val(x, "FMVmethod")) : undefined,
+      })) : undefined,
       electToItemize: override === "force_itemized" || undefined,
     };
   }
@@ -815,19 +905,38 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   // Married filing separately: living with the spouse at any time (not apart all year) matters
   // for Form 8582 (Part V, no special allowance).
   const mfsLivedWithSpouse = status === "MFS" ? val(rd.basic3, "livedApartFromSpouse") !== true : undefined;
-  if (status !== "MFJ" && list(f1040, "dependent_detail").some((d) => val(d, "current_spouse_is_parent") === true)) {
-    outOfScope.add("dependent whose other parent is the spouse, not on a joint return");
+  // Qualifying surviving spouse: the spouse died in either of the two prior years (with a dependent child).
+  if (status === "QSS") {
+    const died = Number(val(rd.basic3, "FilingStatus5YSDIED") ?? 0);
+    if (!(died === taxYear - 1 || died === taxYear - 2)) outOfScope.add(`qualifying surviving spouse with spouse's death year "${val(rd.basic3, "FilingStatus5YSDIED")}"`);
   }
+  // Form 8606 (traditional IRA basis), from the f8606_ui values and basis and the f8606_di
+  // distributions less rollovers and conversions; conversions come from the 1099-R answers.
+  const ui = rd.f8606_ui, di = rd.f8606_di;
+  const f8606For = (sfx: "TP" | "SP", who: "primary" | "spouse") => {
+    const basis = num(val(ui, `tradiIRAbasis${sfx}`));
+    if (!basis) return undefined;
+    const gross = val(di, `grossIRADistLessRolloverOver${sfx}`);
+    const trad = num(val(di, `tradIRADistLessRolloverOver${sfx}`));
+    return {
+      priorBasis: basis,
+      yearEndValue: num(val(ui, `tradValue${sfx}`)) + num(val(ui, `sepSimpleValue${sfx}`)),
+      distributions: gross !== undefined ? num(gross) : Math.max(0, trad - conversions[who]),
+      conversions: conversions[who],
+    };
+  };
+  const f8606Primary = f8606For("TP", "primary"), f8606Spouse = status === "MFJ" ? f8606For("SP", "spouse") : undefined;
+  if ((conversions.primary && !f8606Primary) || (conversions.spouse && !f8606Spouse)) outOfScope.add("Roth conversion without Form 8606 basis answers");
   // A dependent whose relationship isn't given (and isn't the spouse's child) is assumed to be a
   // child; that's only safe when no credit turns on it.
-  const relationUnknown = list(f1040, "dependent_detail").some((d) => !val(d, "dependent_relationship") && val(d, "current_spouse_is_parent") !== true);
+  const relationUnknown = depRows.some((d) => !val(d, "dependent_relationship") && val(d, "current_spouse_is_parent") !== true) && priorRel.length !== depRows.length;
   if (relationUnknown) {
     postChecks.push((r) => r.childAndOtherDependentCredit > 0 || r.additionalChildTaxCredit > 0 || r.earnedIncomeCredit > 0 || r.form2441
       ? "dependent relationship not given, and a credit depends on it" : undefined);
   }
   // Living apart / legal separation changes only the Social Security base amount, the IRA
   // phase-out range and EIC for a separated spouse; none of those may apply.
-  if (["legallySeparated", "livedApartFromSpouse"].some((k) => val(rd.basic3, k) === true)) {
+  if (status === "MFS" && ["legallySeparated", "livedApartFromSpouse"].some((k) => val(rd.basic3, k) === true)) {
     postChecks.push((r) => r.socialSecurity.line1 > 0 || r.schedule1.iraDeduction > 0 || r.earnedIncomeCredit > 0 || dependents.length
       ? "married filing separately while separated or living apart, with Social Security, an IRA deduction, EIC or dependents"
       : undefined);
@@ -842,7 +951,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     firstName: String(val(f1040, "tp_first_name") ?? ""),
     middleInitial: String(val(f1040, "tp_middle_initial") ?? ""),
     lastName: String(val(f1040, "tp_last_name") ?? ""),
-    ssn: String(val(header, "tp_ssn") ?? ""),
+    ssn: String(val(header, "tp_ssn") ?? String(val(rd, "ty25_ssns") ?? "").split("|")[0] ?? ""),
     dateOfBirth: isoToUs(val(f1040, "tp_date_of_birth")),
     occupation: String(val(f1040, "tp_occupation") ?? ""),
     phone: "",
@@ -854,7 +963,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     filingStatus: status ?? "Single",
     spouseFirstName: married ? String(val(f1040, "sp_first_name") ?? "") : null,
     spouseLastName: married ? String(val(f1040, "sp_last_name") ?? "") : null,
-    spouseSSN: married ? String(val(header, "sp_ssn") ?? "") : null,
+    spouseSSN: married ? String(val(header, "sp_ssn") ?? String(val(rd, "ty25_ssns") ?? "").split("|")[1] ?? "") : null,
     spouseDateOfBirth: married ? isoToUs(val(f1040, "sp_date_of_birth")) : null,
     spouseOccupation: married ? String(val(f1040, "sp_occupation") ?? "") : null,
     dependents,
@@ -883,6 +992,9 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     hsa,
     investmentInterest,
     isoExercises,
+    permanentlyDisabled: val(f1040, "tp_disability") === true || val(f1040, "sp_disability") === true
+      ? { primary: val(f1040, "tp_disability") === true, spouse: val(f1040, "sp_disability") === true } : undefined,
+    form8606: f8606Primary || f8606Spouse ? { primary: f8606Primary, spouse: f8606Spouse } : undefined,
     rentals: rentals.length ? rentals : undefined,
     realEstateProfessional: reProfessional || undefined,
     scheduleE1099: val(sheGen, "require1099") === true ? { required: true, filed: val(sheGen, "require1099filed") === "Y" } : undefined,
@@ -904,6 +1016,7 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
       + (status === "MFJ" ? num(val(schedule1, "student_interest_spouse")) : 0),
     ptcMfsException: status === "MFS" && val(rd.irs8962, "mfs_exception_indicator") === true || undefined,
     niitAdditionalModifications: num(val(rd.f8960, "additionalMods")) || undefined,
+    niitStateIncomeTax: num(val(rd.f8960, "stateIncTax")) || undefined,
     rentalIncome: null,
     capitalGains: null,
     socialSecurityBenefits: null,

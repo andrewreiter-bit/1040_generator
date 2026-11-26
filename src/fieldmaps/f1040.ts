@@ -76,6 +76,9 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   zip:              (t) => t.zipCode,
   mfsSpouseName:    (t) => (t.filingStatus === "MFS" ? spouseFullName(t) : BLANK),
   line1a:           (t) => money(r(t).wages),
+  // 1h: disability pensions before minimum retirement age ("DIS", per the 1040 instructions).
+  line1hType:       (t) => (r(t).otherEarnedIncome ? "DIS" : BLANK),
+  line1h:           (t) => moneyOrBlank(r(t).otherEarnedIncome),
   line2b:           (t) => money(r(t).taxableInterest),
   line3a:           (t) => money(r(t).qualifiedDividends),
   line3b:           (t) => money(r(t).ordinaryDividends),
@@ -155,6 +158,7 @@ function buildMap(taxYear: number, layout: Layout1040): FieldMap {
     const value = TEXT_VALUES[key];
     if (!value) throw new Error(`f1040 ${taxYear}: no value for text key ${key}`);
     add(name, key, value);
+    if (key.endsWith("Type")) fields[name] = { ...fields[name], text: true };   // e.g. line 1h "DIS"
   }
   for (const [key, name] of Object.entries(layout.checkbox)) {
     const value = CHECKBOX_VALUES[key];
@@ -269,6 +273,7 @@ const LAYOUT_2023: Layout1040 = {
   text: {
     ...IDENTITY_2023_2024,
     line1a: `${P1}f1_31[0]`,
+    line1h: `${P1}f1_38[0]`,
     line2b: `${P1}f1_42[0]`,
     line3a: `${P1}f1_43[0]`,
     line3b: `${P1}f1_44[0]`,
@@ -320,6 +325,7 @@ const LAYOUT_2024: Layout1040 = {
   text: {
     ...IDENTITY_2023_2024,
     line1a: `${P1}f1_32[0]`,
+    line1h: `${P1}f1_39[0]`,
     line2b: `${P1}f1_43[0]`,
     line3a: `${P1}f1_44[0]`,
     line3b: `${P1}f1_45[0]`,
@@ -400,6 +406,8 @@ const LAYOUT_2025: Layout1040 = {
     zip: `${ADDR}f1_24[0]`,
     mfsSpouseName: `${P1}Checkbox_ReadOrder[0].f1_28[0]`,
     line1a: `${P1}f1_47[0]`,
+    line1hType: `${P1}f1_54[0]`,
+    line1h: `${P1}f1_55[0]`,
     line2b: `${P1}f1_59[0]`,
     line3a: `${P1}f1_60[0]`,
     line3b: `${P1}f1_61[0]`,

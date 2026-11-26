@@ -95,8 +95,8 @@ class Doc {
 }
 
 /** First names from the prior-year Form 1040 (the inputs carry no names or distinct SSNs). */
-function priorYearNames(file: string | undefined): { tp: string; sp: string } {
-  if (!file) return { tp: "", sp: "" };
+function priorYearNames(file: string | undefined): { tp: string; sp: string; tpSsn: string; spSsn: string; relationships: string[] } {
+  if (!file) return { tp: "", sp: "", tpSsn: "", spSsn: "", relationships: [] };
   const raw = readPdf(file);
   const below = (re: RegExp) => {
     const l = raw.labels.find((x) => x.page === 0 && re.test(x.text));
@@ -104,13 +104,23 @@ function priorYearNames(file: string | undefined): { tp: string; sp: string } {
     const v = raw.values.find((x) => x.page === 0 && x.y < l.y && l.y - x.y <= 20 && Math.abs(x.x - l.x) <= 10);
     return v?.lines[0] ?? "";
   };
-  return { tp: below(/^Your first name/), sp: below(/^If joint return, spouse.s first name/) };
+  return {
+    tp: below(/^Your first name/), sp: below(/^If joint return, spouse.s first name/),
+    tpSsn: below(/^Your social security number/), spSsn: below(/^Spouse.s social security number/),
+    // Dependents section: the values under the "Relationship" column, top row first.
+    relationships: (() => {
+      const head = raw.labels.find((x) => x.page === 0 && /^Relationship/.test(x.text));
+      if (!head) return [];
+      return raw.values.filter((v) => v.page === 0 && v.y < head.y && head.y - v.y <= 70 && Math.abs(v.x - head.x) <= 15)
+        .sort((a, b) => b.y - a.y).map((v) => v.lines[0].trim().toLowerCase());
+    })(),
+  };
 }
 
 const sameName = (a: string, b: string) => !!a && !!b && a.trim().split(/\s+/)[0].toLowerCase() === b.trim().split(/\s+/)[0].toLowerCase();
 
 /** Kinds read into answers; any other PDF makes the case out of scope. */
-const READ_KINDS = new Set(["w2", "1099int", "1099div", "w2g", "1099nec", "1098", "1099b", "1040"]);
+const READ_KINDS = new Set(["w2", "1099int", "1099div", "w2g", "1099nec", "1098", "1099b", "1099r", "1040"]);
 
 /**
  * Merge a TY25 case's source documents into its `remaining_data.json` answers, in TY24's layout.
@@ -128,6 +138,10 @@ export function mergeSourceDocuments(inputDir: string, rd: Record<string, unknow
   const f1040 = rd.irs1040 as Record<string, { value: unknown }> | undefined;
   const joint = f1040?.filing_status?.value === "married_jointly";
   const names = priorYearNames(byKind("1040")[0]);
+  // The inputs carry no SSNs; the prior-year return's are the filer's (and the spouse's), which
+  // the SSN tests need (e.g. Schedule 1-A's senior deduction).
+  if (names.tpSsn) extra.ty25_ssns = leaf(`${names.tpSsn}|${names.spSsn}`);
+  if (names.relationships.length) extra.ty25_prior_relationships = leaf(names.relationships.join("|"));
   /** Whose document: on a joint return, by first name against the prior-year return. */
   const whose = (name: string, label: string): "taxpayer" | "spouse" => {
     if (!joint) return "taxpayer";
@@ -225,6 +239,38 @@ export function mergeSourceDocuments(inputDir: string, rd: Record<string, unknow
       });
     }
   }
+  // 1099-R: the TY24 irs1099_r answers. Box 7 holds the distribution code and, to its right, the
+  // IRA/SEP/SIMPLE checkbox; box 2b's "Total distribution" box is the X nearest that caption.
+  // Box 10 (amount allocable to an IRR within 5 years) only matters for a Roth distribution, so
+  // it's carried as its own answer and checked in taxcalcbench.ts.
+  const r1099s = byKind("1099r");
+  if (r1099s.length) {
+    rd.irs1099_r = r1099s.map((file) => {
+      const d = new Doc(file, readPdf(file));
+      const box7 = d.boxes.get("7") ?? [];
+      const code = box7.find((r) => r.x < 360 && /^[0-9A-Z]{1,2}$/.test(r.lines[0]) && r.lines[0] !== "X")?.lines[0] ?? "";
+      const ira = box7.some((r) => r.x >= 360 && /^x$/i.test(r.lines[0]));
+      const checks = (d.boxes.get("2b") ?? []).filter((r) => /^x$/i.test(r.lines[0]));
+      const captions = d.raw.labels.filter((l) => /^(Total|not determined)/.test(l.text));
+      const near = (r: Run) => [...captions].sort((a, b) => Math.hypot(a.x - r.x, a.y - r.y) - Math.hypot(b.x - r.x, b.y - r.y))[0]?.text ?? "";
+      const total = checks.some((r) => /^Total/.test(near(r)));
+      const notDetermined = checks.some((r) => /^not determined/.test(near(r)));
+      return {
+        payer_name_business_name_input: leaf(d.raw.values.find((v) => v.x < 100 && v.y > 715)?.lines[0] ?? ""),
+        gross_distribution_amt_input: leaf(d.amount("1")),
+        taxable_amt_input: leaf(d.amount("2a")),
+        txbl_amount_not_determined_ind_input: leaf(notDetermined),
+        total_distribution_ind_input: leaf(total),
+        federal_income_tax_withheld_amt_input: leaf(d.amount("4")),
+        employee_contributions_amt_input: leaf(d.amount("5")),
+        f1099_r_distribution_cd_input: leaf(code),
+        irasepsimple_ind_input: leaf(ira),
+        irr_amount_box10: leaf(d.amount("10")),
+        ...d.unmodelled("r1099", ["1", "2a", "2b", "4", "5", "7", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19"]),
+      };
+    });
+  }
+
   // Form 1098: box 1 interest and box 6 points (both Schedule A line 8a); box 2 outstanding
   // principal is kept for the § 163(h)(3) limit check; boxes 3, 7–9 and 11 are informational.
   rd.f1098 = byKind("1098").map((file) => {

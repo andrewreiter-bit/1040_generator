@@ -61,6 +61,10 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   if (r.form8962) out.push("f8962");
   if (r.schedule1.hsa?.forms.length) out.push("f8889");
   if (r.form4952?.required) out.push("f4952");
+  if (r.scheduleR) out.push("f1040sr");
+  if (r.retirement.form8606.primary || r.retirement.form8606.spouse) out.push("f8606");
+  if (t.itemized?.casualtyEvents?.length) out.push("f4684");
+  if (r.itemizes && t.itemized?.noncashGifts?.length) out.push("f8283");
   // Form 6251 is attached when line 7 is more than line 10 (i.e. AMT is owed; no AMT foreign tax credit).
   if (r.form6251.line7 > r.form6251.line10) out.push("f6251");
   if (r.scheduleC.length) out.push("f1040sc");
@@ -106,6 +110,23 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f8962":   return single(formId, t, "Form 8962");
     case "f6251":   return single(formId, t, "Form 6251");
     case "f4952":   return single(formId, t, "Form 4952");
+    case "f1040sr": return single(formId, t, "Schedule R");
+    case "f8606": {
+      if (!neededSchedules(t).includes("f8606") || !getFieldMap("f8606", t.taxYear)) return [];
+      const f = computeReturn(t).retirement.form8606;
+      const ps = (["primary", "spouse"] as const).filter((p) => f[p]);
+      return ps.map((p, i) => ({ index: i + 1, count: ps.length, label: `Form 8606 #${i + 1} (${p})`, view: { ...t, document: { source: t, form8606Person: p } } }));
+    }
+    case "f4684": {
+      if (!neededSchedules(t).includes("f4684") || !getFieldMap("f4684", t.taxYear)) return [];
+      const es = t.itemized?.casualtyEvents ?? [];
+      return es.map((_, i) => ({ index: i + 1, count: es.length, label: `Form 4684 #${i + 1}`, view: { ...t, document: { source: t, casualtyIndex: i } } }));
+    }
+    case "f8283": {
+      if (!neededSchedules(t).includes("f8283") || !getFieldMap("f8283", t.taxYear)) return [];
+      const n = Math.ceil((t.itemized?.noncashGifts?.length ?? 0) / 4);
+      return Array.from({ length: n }, (_, i) => ({ index: i + 1, count: n, label: `Form 8283 #${i + 1}`, view: { ...t, document: { source: t, form8283Copy: i } } }));
+    }
     case "f8889": {
       const fs = computeReturn(t).schedule1.hsa?.forms ?? [];
       if (!getFieldMap("f8889", t.taxYear)) return [];

@@ -26,11 +26,13 @@
  * (Social Security worksheet, Form 8582 modified AGI, the senior deduction).
  */
 import { FakeTaxpayer, Retirement1099R } from "../faker/taxpayer";
+import { Form8606Lines, form8606 } from "./ira-basis";
 import { Rounder, sumWith } from "./rounding";
 
 export interface RetirementRecord {
   r: Retirement1099R;
-  line: "ira" | "pension";
+  /** "wages": a disability pension before minimum retirement age (Form 1040 line 1h). */
+  line: "ira" | "pension" | "wages";
   /** Amount that goes on 4b/5b for this distribution. */
   taxable: number;
   /** Fully taxable with no exception: on its own it would leave 4a/5a blank. */
@@ -56,6 +58,11 @@ export interface RetirementLines {
   /** A person has code 1 alongside another code (Form 5329 would be required). */
   needsForm5329: boolean;
   federalWithheld: number;
+  /** Form 1040 line 1h: disability pensions before minimum retirement age, per person. */
+  disabilityPension: { primary: number; spouse: number };
+  /** Form 8606 per person with basis (its lines 15c + 18 replace box 2a for that person's IRAs). */
+  form8606: { primary?: Form8606Lines; spouse?: Form8606Lines };
+  unsupported: string[];
 }
 
 /** 1099-Rs on this return (a spouse's only when filing jointly). */
@@ -65,20 +72,33 @@ export function includedRetirement1099Rs(t: FakeTaxpayer): Retirement1099R[] {
 
 export function retirementDistributions(t: FakeTaxpayer, R: Rounder): RetirementLines {
   const sum = (xs: number[]) => sumWith(R, xs);
+  const joint = t.filingStatus === "MFJ";
+  const f8606: RetirementLines["form8606"] = {
+    primary: t.form8606?.primary ? form8606(t.form8606.primary, R) : undefined,
+    spouse: joint && t.form8606?.spouse ? form8606(t.form8606.spouse, R) : undefined,
+  };
+  const unsupported: string[] = [];
   const records: RetirementRecord[] = includedRetirement1099Rs(t).map((r) => {
     const code = r.distributionCode;
-    const taxable = code === "G" || code === "Q" ? 0 : R(r.taxableAmount);
+    const who = r.recipient ?? "primary";
+    const disability = code === "3" && !!r.disabilityBeforeRetirementAge;
+    // A person with Form 8606 basis: the form, not box 2a, gives the IRA's taxable part.
+    const viaForm8606 = r.iraSepSimple && !!f8606[who];
+    const taxable = code === "G" || code === "Q" || viaForm8606 ? 0 : R(r.taxableAmount);
     const rollover = code === "G";
     return {
       r,
-      line: r.iraSepSimple ? "ira" : "pension",
+      line: disability ? "wages" : r.iraSepSimple ? "ira" : "pension",
       taxable,
-      fullyTaxable: !rollover && code !== "Q" && taxable === R(r.grossDistribution),
+      fullyTaxable: !rollover && code !== "Q" && !viaForm8606 && taxable === R(r.grossDistribution),
       rollover,
       earlyTax: 0,
     };
   });
   const early = records.filter((x) => x.r.distributionCode === "1");
+  if (early.some((x) => x.r.iraSepSimple && f8606[x.r.recipient ?? "primary"] && f8606[x.r.recipient ?? "primary"]!.taxable > 0)) {
+    unsupported.push("code 1 IRA distribution with Form 8606 basis (Form 5329)");
+  }
   const person = (x: RetirementRecord) => x.r.recipient ?? "primary";
   const needsForm5329 = early.some((e) => records.some((x) => person(x) === person(e) && x.r.distributionCode !== "1"));
   // 10% of the taxable amount of the code 1 distributions, as one line-8 figure.
@@ -90,7 +110,7 @@ export function retirementDistributions(t: FakeTaxpayer, R: Rounder): Retirement
     const blank = xs.every((x) => x.fullyTaxable);
     return {
       gross: blank ? 0 : sum(xs.map((x) => x.r.grossDistribution)),
-      taxable: sum(xs.map((x) => x.taxable)),
+      taxable: R(sum(xs.map((x) => x.taxable)) + (line === "ira" ? sum([f8606.primary?.taxable ?? 0, f8606.spouse?.taxable ?? 0]) : 0)),
       blank,
       rollover: xs.some((x) => x.rollover),
     };
@@ -105,5 +125,11 @@ export function retirementDistributions(t: FakeTaxpayer, R: Rounder): Retirement
     additionalTax,
     needsForm5329,
     federalWithheld: sum(records.map((x) => x.r.federalWithheld)),
+    disabilityPension: {
+      primary: sum(records.filter((x) => x.line === "wages" && (x.r.recipient ?? "primary") === "primary").map((x) => x.taxable)),
+      spouse: sum(records.filter((x) => x.line === "wages" && x.r.recipient === "spouse").map((x) => x.taxable)),
+    },
+    form8606: f8606,
+    unsupported,
   };
 }

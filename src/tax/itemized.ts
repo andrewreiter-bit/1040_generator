@@ -23,7 +23,17 @@ export interface ScheduleALines {
   line5a: number; salesTaxElected: boolean; line5b: number; line5c: number; line5d: number;
   saltCap: number; line5e: number; line7: number;
   line8a: number; line8c: number; line8e: number; line9: number; line10: number;
-  line11: number; line12: number; line13: number; line14: number; line16: number;
+  line11: number; line12: number; line13: number; line14: number;
+  /** Line 15: casualty and theft losses from federally declared disasters (Form 4684 line 18). */
+  line15: number;
+  /** Line 16: gambling losses plus a net qualified disaster loss (Form 4684 line 15). */
+  line16: number;
+  gamblingLosses: number;
+  /** Net qualified disaster loss: on line 16 when itemizing, or added to the standard deduction. */
+  qualifiedDisasterLoss: number;
+  /** Form 4684 Section A totals (lines 14–18), when there are casualty events. */
+  form4684?: { events: Array<{ kind: string; loss: number; floor: number; net: number }>; line14: number; line15: number; line16: number; line17: number; line18: number };
+  casualtyUnsupported: string[];
   line17: number;
   electToItemize: boolean;
   charityLimitMayApply: boolean;
@@ -60,11 +70,35 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
   } else {
     charityLimitMayApply = line11 > agi * 0.6 || line12 > agi * 0.3 || (line13 > 0 && line14 > agi * 0.2);
   }
-  const line16 = Math.min(R(it.gamblingLosses ?? 0), R(gamblingWinnings));
-  const line17 = sum([line4, line7, line10, line14, line16]);
+  const gamblingLosses = Math.min(R(it.gamblingLosses ?? 0), R(gamblingWinnings));
+  // Form 4684 Section A, per event: the smaller of basis or the drop in value, less insurance;
+  // less $100 ($500 for a qualified disaster loss). Losses not from a federally declared disaster
+  // offset only casualty gains (2018–2025), and there are none modelled, so they drop out.
+  const casualtyUnsupported: string[] = [];
+  let form4684: ScheduleALines["form4684"];
+  let qualifiedDisasterLoss = 0, line15 = 0;
+  if (it.casualtyEvents?.length) {
+    const events = it.casualtyEvents.map((e) => {
+      const loss = sum(e.items.map((x) => {
+        if (x.insurance > x.basis) casualtyUnsupported.push("casualty gain (insurance above basis)");
+        return Math.max(0, R(Math.min(x.basis, Math.max(0, x.fmvBefore - x.fmvAfter)) - x.insurance));
+      }));
+      const floor = e.kind === "qualified" ? 500 : 100;
+      return { kind: e.kind, loss, floor, net: Math.max(0, R(loss - floor)) };
+    });
+    const fed = sum(events.filter((e) => e.kind === "federal").map((e) => e.net));
+    qualifiedDisasterLoss = sum(events.filter((e) => e.kind === "qualified").map((e) => e.net));
+    const l14 = sum([fed, qualifiedDisasterLoss]);
+    const l17 = R(agi * 0.1);
+    line15 = Math.max(0, R(fed - l17));
+    form4684 = { events, line14: l14, line15: qualifiedDisasterLoss, line16: fed, line17: l17, line18: line15 };
+  }
+  const line16 = sum([gamblingLosses, qualifiedDisasterLoss]);
+  const line17 = sum([line4, line7, line10, line14, line15, line16]);
   return {
     line1, line2, line3, line4, line5a, salesTaxElected: it.stateLocalTax?.kind === "sales", line5b, line5c, line5d,
-    saltCap: cap, line5e, line7, line8a, line8c, line8e, line9, line10, line11, line12, line13, line14, line16, line17,
+    saltCap: cap, line5e, line7, line8a, line8c, line8e, line9, line10, line11, line12, line13, line14, line15, line16, line17,
+    gamblingLosses, qualifiedDisasterLoss, form4684, casualtyUnsupported,
     electToItemize: !!it.electToItemize, charityLimitMayApply,
   };
 }
