@@ -218,6 +218,8 @@ npm run fill -- --forms f1040,fw2 --seed 42
 # Produces f1040_seed42.pdf and fw2_seed42.pdf — identical on every run
 ```
 
+A seed and tax year always give the same household, whatever today's date: every profile measures ages at the end of the tax year, never from the system clock. (Before, `original_random` drew birth years back from the current year, so the same seed aged a year with each calendar year.)
+
 ---
 
 ### Batch Generation

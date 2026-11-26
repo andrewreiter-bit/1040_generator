@@ -65,9 +65,9 @@ function fakeDateInYear(faker: Faker, year: number): string {
   return `${String(d.getMonth()+1).padStart(2,"0")}/${String(d.getDate()).padStart(2,"0")}/${d.getFullYear()}`;
 }
 
-function fakeBirthDate(faker: Faker, minAge = 22, maxAge = 70): string {
-  const now = new Date();
-  const year = now.getFullYear() - faker.number.int({ min: minAge, max: maxAge });
+/** Age minAge–maxAge at the end of the tax year (not today), so a seed gives the same household whenever it runs. */
+function fakeBirthDate(faker: Faker, taxYear: number, minAge = 22, maxAge = 70): string {
+  const year = taxYear - faker.number.int({ min: minAge, max: maxAge });
   const month = faker.number.int({ min: 1, max: 12 });
   const day   = faker.number.int({ min: 1, max: 28 });
   return `${String(month).padStart(2,"0")}/${String(day).padStart(2,"0")}/${year}`;
@@ -139,7 +139,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   const firstName = faker.person.firstName();
   const lastName  = faker.person.lastName();
   const state     = faker.location.state({ abbreviated: true });
-  const birthDateStr = fakeBirthDate(faker);
+  const birthDateStr = fakeBirthDate(faker, taxYear);
   const birthYear = parseInt(birthDateStr.split("/")[2]);
 
   const filingStatuses: FilingStatus[] = ["Single", "MFJ", "MFS", "HOH"];
@@ -204,7 +204,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
     spouseFirstName:   hasSPouse ? faker.person.firstName() : null,
     spouseLastName:    hasSPouse ? lastName : null,
     spouseSSN:         hasSPouse ? fakeSSN(faker) : null,
-    spouseDateOfBirth: hasSPouse ? fakeBirthDate(faker) : null,
+    spouseDateOfBirth: hasSPouse ? fakeBirthDate(faker, taxYear) : null,
     spouseOccupation:  hasSPouse ? faker.person.jobTitle() : null,
     dependents,
     routingNumber: fakeRoutingNumber(faker),
@@ -220,7 +220,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
     businessIncome: faker.datatype.boolean({ probability: 0.2 }) ? fakeDollar(faker, -5000, 80000) : null,
     rentalIncome:   faker.datatype.boolean({ probability: 0.15 }) ? fakeDollar(faker, 0, 30000) : null,
     capitalGains:   faker.datatype.boolean({ probability: 0.25 }) ? fakeDollar(faker, -3000, 20000) : null,
-    socialSecurityBenefits: age(birthDateStr) >= 62 ? fakeDollar(faker, 5000, 30000) : null,
+    socialSecurityBenefits: age(birthDateStr, taxYear) >= 62 ? fakeDollar(faker, 5000, 30000) : null,
     takesStandardDeduction: takesStandard,
     itemizedDeductionTotal: takesStandard ? null : fakeDollar(faker, 15000, 60000),
     preparerPtin: faker.datatype.boolean({ probability: 0.4 })
@@ -285,8 +285,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
   return taxpayer;
 }
 
-function age(dob: string): number {
-  const [m, d, y] = dob.split("/").map(Number);
-  const now = new Date();
-  return now.getFullYear() - y - (now.getMonth() + 1 < m || (now.getMonth() + 1 === m && now.getDate() < d) ? 1 : 0);
+/** Age at the end of the tax year (not today). */
+function age(dob: string, taxYear: number): number {
+  return taxYear - Number(dob.split("/")[2]);
 }
