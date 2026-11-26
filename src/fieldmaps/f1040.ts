@@ -131,6 +131,10 @@ const CHECKBOX_VALUES: Record<string, FieldValue> = {
   savings:          (t) => checkIf(hasRefund(t) && t.accountType === "Savings"),
   // Only capital gain distributions (1099-DIV box 2a) → Schedule D not required.
   scheduleDNotRequired: (t) => checkIf(r(t).capital.distributionsOnly),
+  // 2025 Dependents section: "Check if your filing status is MFS or HOH and you lived apart from your
+  // spouse for the last 6 months ..., or you are legally separated ...". Profile HOH filers are
+  // unmarried, so only a separated MFS filer checks it.
+  separatedSpouse:  (t) => checkIf(r(t).separatedSpouse),
   youBornBefore:    (t) => checkIf(r(t).youAre65),
   spouseBornBefore: (t) => checkIf(r(t).spouseIs65),
   youBlind:         (t) => checkIf(r(t).youBlind),
@@ -455,6 +459,7 @@ const LAYOUT_2025: Layout1040 = {
     digitalAssetsNo: `${P1}c1_10[1]`,
     moreThan4Deps: `${P1}Dependents_ReadOrder[0].c1_11[0]`,
     scheduleDNotRequired: `${P1}c1_43[0]`,
+    separatedSpouse: `${P1}c1_32[0]`,
     line4cRollover: `${P1}c1_35[0]`,
     line4cQcd: `${P1}c1_36[0]`,
     line4cOther: `${P1}c1_37[0]`,

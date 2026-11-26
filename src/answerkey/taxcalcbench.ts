@@ -905,6 +905,11 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
   // Married filing separately: living with the spouse at any time (not apart all year) matters
   // for Form 8582 (Part V, no special allowance).
   const mfsLivedWithSpouse = status === "MFS" ? val(rd.basic3, "livedApartFromSpouse") !== true : undefined;
+  // EIC separated-spouse test (§ 32(d)(2)). livedWithSpouse6Mos asks whether the spouses "have the
+  // same principal residence for the last 6 months"; legallySeparated covers the written agreement
+  // or decree with the spouses apart at year end.
+  const mfsApartLast6Months = status === "MFS" && val(rd.basic3, "livedWithSpouse6Mos") === false ? true : undefined;
+  const mfsLegallySeparated = status === "MFS" && val(rd.basic3, "legallySeparated") === true ? true : undefined;
   // Qualifying surviving spouse: the spouse died in either of the two prior years (with a dependent child).
   if (status === "QSS") {
     const died = Number(val(rd.basic3, "FilingStatus5YSDIED") ?? 0);
@@ -934,11 +939,12 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     postChecks.push((r) => r.childAndOtherDependentCredit > 0 || r.additionalChildTaxCredit > 0 || r.earnedIncomeCredit > 0 || r.form2441
       ? "dependent relationship not given, and a credit depends on it" : undefined);
   }
-  // Living apart / legal separation changes only the Social Security base amount, the IRA
-  // phase-out range and EIC for a separated spouse; none of those may apply.
+  // Living apart / legal separation also changes the Social Security base amount and the IRA
+  // phase-out range, and (with dependents) the "considered unmarried" tests; none of those may apply.
+  // EIC for a separated spouse is modelled.
   if (status === "MFS" && ["legallySeparated", "livedApartFromSpouse"].some((k) => val(rd.basic3, k) === true)) {
-    postChecks.push((r) => r.socialSecurity.line1 > 0 || r.schedule1.iraDeduction > 0 || r.earnedIncomeCredit > 0 || dependents.length
-      ? "married filing separately while separated or living apart, with Social Security, an IRA deduction, EIC or dependents"
+    postChecks.push((r) => r.socialSecurity.line1 > 0 || r.schedule1.iraDeduction > 0 || dependents.length
+      ? "married filing separately while separated or living apart, with Social Security, an IRA deduction or dependents"
       : undefined);
   }
   for (const k of ["tp_dependent", "sp_dependent", "eic_not_allowed", "qualifying_child_of_another"]) {
@@ -999,6 +1005,8 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     realEstateProfessional: reProfessional || undefined,
     scheduleE1099: val(sheGen, "require1099") === true ? { required: true, filed: val(sheGen, "require1099filed") === "Y" } : undefined,
     mfsLivedWithSpouse,
+    mfsApartLast6Months,
+    mfsLegallySeparated,
     gamblingWinnings: gamblingWinnings.length ? gamblingWinnings : undefined,
     fullTimeStudent: val(f1040, "tp_student") === true || val(f1040, "sp_student") === true
       ? { primary: val(f1040, "tp_student") === true, spouse: val(f1040, "sp_student") === true }

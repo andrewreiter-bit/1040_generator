@@ -79,15 +79,17 @@ function fakeDollar(faker: Faker, min: number, max: number): number {
 
 // ─── Dependent Builder ────────────────────────────────────────────────────────
 
-function buildDependent(faker: Faker, taxYear: number): Dependent {
+function buildDependent(faker: Faker, taxYear: number, familyName: string): Dependent {
   // Unused, but kept so every later draw (and so every seed's household) stays the same.
   faker.number.int({ min: 20, max: 35 });
   // Age 0–17 at the end of the tax year (not "today"), so no child is born after the
   // tax year and the same seed gives the same household whenever it runs.
   const childBirthYear = taxYear - faker.number.int({ min: 0, max: 17 });
+  const firstName = faker.person.firstName();
+  faker.person.lastName(); // drawn but unused (children take the family name), so every later draw stays the same
   return {
-    firstName: faker.person.firstName(),
-    lastName: faker.person.lastName(),
+    firstName,
+    lastName: familyName,
     ssn: fakeSSN(faker),
     relationship: "Child",
     birthYear: childBirthYear,
@@ -179,7 +181,7 @@ export function createTaxpayer(seed?: number, taxYear = 2025): FakeTaxpayer {
 
   // Dependents: 0-3
   const depCount = faker.number.int({ min: 0, max: 3 });
-  const dependents: Dependent[] = Array.from({ length: depCount }, () => buildDependent(faker, taxYear));
+  const dependents: Dependent[] = Array.from({ length: depCount }, () => buildDependent(faker, taxYear, lastName));
 
   const takesStandard = faker.datatype.boolean({ probability: 0.87 });
 

@@ -73,6 +73,16 @@ export function otherDependentCount(t: FakeTaxpayer): number {
   return t.dependents.filter((d) => qualifiesForOtherDependentCredit(d, t)).length;
 }
 
+/**
+ * Separated spouse (§ 32(d)(2)(B)(ii)): a separate filer who lived apart from the spouse for the
+ * last 6 months of the year (apart all year counts), or is legally separated under a written
+ * agreement or decree and not in the spouse's household at year end. With a qualifying child who
+ * lived with them more than half the year, such a filer isn't treated as married for EIC.
+ */
+export function separatedSpouse(t: FakeTaxpayer): boolean {
+  return t.filingStatus === "MFS" && (!!t.mfsApartLast6Months || !!t.mfsLegallySeparated || t.mfsLivedWithSpouse === false);
+}
+
 export function eicChildren(t: FakeTaxpayer): Dependent[] {
   return t.dependents.filter((d) => qualifiesForEic(d, t));
 }

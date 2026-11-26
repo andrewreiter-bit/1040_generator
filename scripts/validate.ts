@@ -33,7 +33,7 @@ import { scheduleEicChildren } from "../src/fieldmaps/credits";
 import { computeReturn } from "../src/tax/compute";
 import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/documents";
 import { EXPENSE_LINES } from "../src/tax/business";
-import { includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
+import { eicChildren, includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
 import { zipMatchesState } from "../src/faker/zip";
 import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
@@ -345,6 +345,12 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     };
     walk(t);
     checks.push({ phase: 2, id: "zip-in-state", ok: off.length === 0, detail: off.length ? off.slice(0, 3).join("; ") : "home, W-2 and payer ZIPs in state" });
+  }
+
+  // Children drawn by the profiles carry the family surname.
+  {
+    const off = t.dependents.filter((d) => d.relationship === "Child" && d.lastName !== t.lastName).map((d) => `${d.firstName} ${d.lastName}`);
+    checks.push({ phase: 2, id: "children-share-family-name", ok: off.length === 0, detail: off.length ? off.join(", ") : `${t.dependents.length} dependent(s)` });
   }
 
   // ── 1099s ───────────────────────────────────────────────────────────────────
@@ -991,6 +997,20 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     const kids = scheduleEicChildren(t);
     const bad = [0, 1, 2].filter((i) => digits(sei(`child${i + 1}.ssn`)) !== digits(kids[i]?.ssn ?? "")).map((i) => `child ${i + 1}`);
     checks.push({ phase: 2, id: "schEIC-lists-qualifying-children", ok: !bad.length, detail: bad.length ? bad.join(", ") : `${kids.length} child(ren)` });
+    if (t.taxYear < 2025) {
+      const want = t.filingStatus === "MFS" && r.earnedIncomeCredit > 0;
+      checks.push({ phase: 2, id: "schEIC-separated-spouse-box", ok: (sei("separatedSpouse") === "Yes") === want, detail: `box ${sei("separatedSpouse") || "(blank)"}, expected ${want ? "checked" : "blank"}` });
+    }
+  }
+  // Separated spouse (§ 32(d)(2)): EIC on a separate return needs a qualifying child and the
+  // separated-spouse test (apart for the last 6 months, or legally separated), recomputed here.
+  {
+    const sep = t.filingStatus === "MFS" && (!!t.mfsApartLast6Months || !!t.mfsLegallySeparated || t.mfsLivedWithSpouse === false);
+    if (t.filingStatus === "MFS") {
+      const ok = n0(line("line27")) === 0 || (sep && eicChildren(t).length > 0);
+      checks.push({ phase: 2, id: "mfs-eic-only-separated-spouse", ok, detail: `EIC ${n0(line("line27"))}, separated ${sep}, ${eicChildren(t).length} EIC child(ren)` });
+    }
+    if (t.taxYear >= 2025) checks.push({ phase: 2, id: "1040-separated-spouse-box", ok: (line("separatedSpouse") === "Yes") === sep, detail: `box ${line("separatedSpouse") || "(blank)"}, separated ${sep}` });
   }
 
   // ── Form selection (Phase 3): only include schedules the household needs ──
