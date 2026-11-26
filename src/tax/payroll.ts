@@ -61,6 +61,7 @@ export interface Form8960Lines {
   rentalAdjustment: number;
   line4c: number;               // 4a + 4b
   investmentInterest: number;   // 9a (Form 4952 line 8, when itemized)
+  additionalModifications: number; // 10
   totalDeductions: number;      // 11
   netInvestmentIncome: number;  // 12
   modifiedAgi: number;          // 13
@@ -75,16 +76,16 @@ export interface Form8960Lines {
  */
 export function form8960(
   status: FilingStatus, agi: number, interest: number, dividends: number, capitalGain: number, R: Rounder,
-  rentalIncome = 0, investmentInterest = 0, rentalAdjustment = 0,
+  rentalIncome = 0, investmentInterest = 0, rentalAdjustment = 0, additionalModifications = 0,
 ): Form8960Lines {
   const t = NIIT.threshold;
   const threshold = status === "MFJ" || status === "QSS" ? t.joint : status === "MFS" ? t.mfs : t.other;
   const line4c = R(rentalIncome + rentalAdjustment);
-  const totalDeductions = R(investmentInterest);
+  const totalDeductions = R(investmentInterest + additionalModifications);
   const netInvestmentIncome = Math.max(0, R(interest + dividends + line4c + capitalGain - totalDeductions));
   const agiOverThreshold = Math.max(0, R(agi - threshold));
   const tax = R(Math.min(netInvestmentIncome, agiOverThreshold) * NIIT.rate);
-  return { rentalIncome, rentalAdjustment: R(rentalAdjustment), line4c, investmentInterest: R(investmentInterest), totalDeductions, netInvestmentIncome, modifiedAgi: agi, threshold, agiOverThreshold, tax };
+  return { rentalIncome, rentalAdjustment: R(rentalAdjustment), line4c, investmentInterest: R(investmentInterest), additionalModifications: R(additionalModifications), totalDeductions, netInvestmentIncome, modifiedAgi: agi, threshold, agiOverThreshold, tax };
 }
 
 /**

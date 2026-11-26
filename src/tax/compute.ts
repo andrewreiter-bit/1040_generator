@@ -488,7 +488,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   // ── Schedule 2 Part II ────────────────────────────────────────────────────
   const f8959 = form8959(t.filingStatus, w2s, scheduleSEs, R);
-  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0, round2(niiRental - rentalIncome));
+  const f8960 = form8960(t.filingStatus, agi, taxableInterest, ordinaryDividends, capitalGain, R, rentalIncome, f4952?.line8 ?? 0, round2(niiRental - rentalIncome), t.niitAdditionalModifications ?? 0);
   const seTax = sum(scheduleSEs.map((s) => s.seTax));
   const earlyDistributionTax = retirement.additionalTax;
   // Line 13 (Schedule 2 instructions): "box 12 of Form W-2 with codes A and B or M and N".

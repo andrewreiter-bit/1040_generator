@@ -119,6 +119,11 @@ export const CHECKED_FORM_LINES: Array<{ form: string; element: string; label: s
   { form: "IRS1040ScheduleE", element: "LossesAmt", label: "Sch E 25", pick: (r) => (r.scheduleE ? [-r.scheduleE.line25] : []) },
   { form: "IRS1040ScheduleE", element: "TotalIncomeOrLossAmt", label: "Sch E 26", pick: (r) => (r.scheduleE ? [r.scheduleE.line26] : []) },
   { form: "IRS8995", element: "TotQlfyBusinessIncomeOrLossAmt", label: "8995 2", pick: (r) => (r.form8995 && !r.form8995A ? [r.form8995.totalQbi] : []) },
+  // Form 8962 reconciliation and Form 8960 net investment income.
+  { form: "IRS8962", element: "TotalAdvancedPTCAmt", label: "8962 25", pick: (r) => (r.form8962 ? [r.form8962.line25] : []) },
+  { form: "IRS8962", element: "ExcessAdvncPaymentAmt", label: "8962 27", pick: (r) => (r.form8962?.line27 ? [r.form8962.line27] : []) },
+  { form: "IRS8962", element: "PremiumTaxCreditTaxLiabAmt", label: "8962 29", pick: (r) => (r.form8962?.line29 ? [r.form8962.line29] : []) },
+  { form: "IRS8960", element: "NetInvestmentIncomeAmt", label: "8960 12", pick: (r) => (r.form8960.tax > 0 ? [r.form8960.netInvestmentIncome] : []) },
   // Form 4952: line 4g changes the tax but not the 1040 lines' inputs, so check it directly.
   { form: "IRS4952", element: "TotalInvestmentInterestExpAmt", label: "4952 3", pick: (r) => (r.form4952?.required ? [r.form4952.line3] : []) },
   { form: "IRS4952", element: "InvestmentIncomeElectionAmt", label: "4952 4g", pick: (r) => (r.form4952?.required ? [r.form4952.line4g] : []) },
@@ -255,7 +260,7 @@ const SUPPORTED_PATHS: RegExp[] = [
   // Form 2441: care providers and prior-year expenses paid this year (line 9b).
   /^irs2441\.(carryover|care_provider_grp\[\]\.(provider_name|street_address|city|state|zip|provider_ssn|provider_ein|paid_to_provider)|qualifying_person_grp\[\]\.(person|qualifying_expenses_paid))$/,
   // Form 8962 / 1095-A: one full-year policy (annual amounts).
-  /^irs8962\.(received_1095a|full_year_coverage_1095a|annual_premium|annual_premium_slcsp|annual_advanced_ptc)$/,
+  /^irs8962\.(received_1095a|full_year_coverage_1095a|annual_premium|annual_premium_slcsp|annual_advanced_ptc|mfs_exception_indicator)$/,
   // Form 8863 (one institution per student).
   /^irs8863\.(total_support_8863|either_parent_alive)$/,
   /^irs8863\.student_educational_instn_grp\[\]\.(student|prior_year_credit_claimed|academic_period_eligible_student|post_secondary_education|drug_felony_conviction)$/,
@@ -282,6 +287,14 @@ const SUPPORTED_PATHS: RegExp[] = [
   /^f1098\[\]\.(mortgage_interest|outstanding_principal|points)$/,
   /^f4952\.(currentYearExpenses|COfromBefore|qualDivLineElectedInvest)$/,
   /^f6251\.stockOption$/,
+  // TY25: Form 8960 line 10; a spouse's student loan interest (joint returns; not deductible
+  // separately); and the business-property screener for a plain sale. The dataset has no answers
+  // for a sale's details, and the expected returns that answer "sold" (us-004, us-007) file no
+  // Form 4797, so the screener alone changes nothing; a conversion to personal use or a
+  // like-kind/installment/casualty disposition (disposition_type_converted/_other) stays out of scope.
+  /^f8960\.additionalMods$/,
+  /^irs1040_schedule1\.student_interest_spouse$/,
+  /^(sell_business_property|disposition_type_sold)$/,
   // TY25 Schedule E rentals and royalties (values checked in toTaxpayer).
   /^sche_gen\.(REProfessional|require1099|require1099filed)$/,
   /^scherentslist\[\]\.(OWNER|activeParticipation|addrUS(AddressLine1|City|State|ZIPCode)|advertising|legal|atRisk|autoExp|isQBI|otherIncome|personalUseDays|propertyType|rentalDays|rentalSold|qualified_business|former_employer|specified_service|material_participant|royalty_passive_portfolio|noFormDepreciation|sch_e_depr_amort_expense_(screener|method))$/,
@@ -887,7 +900,10 @@ export function toTaxpayer(input: Json, taxYear = 2024): Conversion {
     educatorExpenses: educator
       ? { primary: num(val(schedule1, "tp_educator_exp_amount")), spouse: num(val(schedule1, "sp_educator_exp_amount")) }
       : undefined,
-    studentLoanInterestPaid: val(schedule1, "paid_student_loan_interest") === true ? num(val(schedule1, "student_interest")) : 0,
+    studentLoanInterestPaid: (val(schedule1, "paid_student_loan_interest") === true ? num(val(schedule1, "student_interest")) : 0)
+      + (status === "MFJ" ? num(val(schedule1, "student_interest_spouse")) : 0),
+    ptcMfsException: status === "MFS" && val(rd.irs8962, "mfs_exception_indicator") === true || undefined,
+    niitAdditionalModifications: num(val(rd.f8960, "additionalMods")) || undefined,
     rentalIncome: null,
     capitalGains: null,
     socialSecurityBenefits: null,

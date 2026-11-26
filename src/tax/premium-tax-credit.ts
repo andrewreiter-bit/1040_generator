@@ -16,15 +16,21 @@
  *            repaid up to the Table 5 limit (none at 400%+) on Schedule 2 line 2 (2023) /
  *            line 1a (2024–2025)
  *
- * Not modelled (reported as unsupported): married filing separately (the exception for
- * victims of domestic abuse or spousal abandonment), household income under 100% of the
- * poverty line, and the monthly calculation, allocation and year-of-marriage parts.
+ * Married filing separately: without the line A exception (domestic abuse or spousal
+ * abandonment, `ptcMfsException`) the filer can't take the PTC, so line 11(e) and line 24 are
+ * $0 and every advance payment is excess, repaid up to the Table 5 limit. With the exception
+ * the credit is figured as usual.
+ *
+ * Not modelled (reported as unsupported): household income under 100% of the poverty line, and
+ * the monthly calculation, allocation and year-of-marriage parts.
  */
 import { FakeTaxpayer } from "../faker/taxpayer";
 import { PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT } from "../config/tax-year";
 import { Rounder, sumWith } from "./rounding";
 
 export interface Form8962Lines {
+  /** Married filing separately without the line A exception: no PTC; only the reconciliation applies. */
+  ineligibleMfs: boolean;
   line1: number; line2a: number; line2b: number; line3: number;
   table: "alaska" | "hawaii" | "contiguous";
   line4: number; line5: number; line7: number; line8a: number; line8b: number;
@@ -66,7 +72,7 @@ export function form8962(
   if (!policies.length) return undefined;
   const sum = (xs: number[]) => sumWith(R, xs);
   const unsupported: string[] = [];
-  if (t.filingStatus === "MFS") unsupported.push("premium tax credit on a separate return (Form 8962 line A exception)");
+  const ineligibleMfs = t.filingStatus === "MFS" && !t.ptcMfsException;
 
   const line1 = 1 + (t.filingStatus === "MFJ" ? 1 : 0) + t.dependents.filter((d) => d.birthYear <= t.taxYear).length;
   const line2a = R(agi + Math.max(0, socialSecurity.line1 - socialSecurity.taxable));
@@ -74,7 +80,7 @@ export function form8962(
   const line3 = R(line2a + line2b);
   const { table, amount: line4 } = povertyLine(t, line1);
   const line5 = line3 > line4 * 4 ? 401 : Math.floor((line3 * 100) / line4 + 1e-9);
-  if (line5 < 100) unsupported.push("household income under 100% of the federal poverty line (Form 8962 line 5)");
+  if (line5 < 100 && !ineligibleMfs) unsupported.push("household income under 100% of the federal poverty line (Form 8962 line 5)");
   const line7 = applicableFigure(line5);
   const line8a = contributionAmount(line3, line7);
   const line8b = Math.round(line8a / 12);
@@ -82,7 +88,7 @@ export function form8962(
   const b = sum(policies.map((p) => p.annualSlcsp));
   const c = line8a;
   const d = Math.max(0, R(b - c));
-  const e = Math.min(a, d);
+  const e = ineligibleMfs ? 0 : Math.min(a, d);
   const f = sum(policies.map((p) => p.annualAdvancePayments));
   const line24 = e, line25 = f;
   const line26 = line24 >= line25 ? R(line24 - line25) : undefined;
@@ -92,6 +98,6 @@ export function form8962(
   const line29 = line27 > 0 ? (line28 === undefined ? line27 : Math.min(line27, line28)) : 0;
   return {
     line1, line2a, line2b, line3, table, line4, line5, line7, line8a, line8b,
-    line11: { a, b, c, d, e, f }, line24, line25, line26, line27, line28, line29, unsupported,
+    line11: { a, b, c, d, e, f }, line24, line25, line26, line27, line28, line29, ineligibleMfs, unsupported,
   };
 }
