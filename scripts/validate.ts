@@ -38,7 +38,7 @@ import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "fw2g", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "f1099sa", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj"];
@@ -584,7 +584,10 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     const l3 = n0(m41("line3")), l4 = n0(m41("line4")), l5 = n0(m41("line5")), l6 = n0(m41("line6")), l7 = n0(m41("line7"));
     if (!near(l3, Math.min(listed, nPersons >= 2 ? 6000 : 3000))) bad.push(`3 ${l3}`);
     const earned = (who: string) => round2(includedW2s(t).filter((w) => (w.employee ?? "primary") === who).reduce((x, w) => x + w.wages, 0)
-      + r.scheduleSE.filter((s) => s.owner === who).reduce((x, s) => x + s.combined - s.deduction, 0));
+      + r.scheduleSE.filter((s) => s.owner === who).reduce((x, s) => x + s.combined - s.deduction, 0)
+      // A disability pension before minimum retirement age is wages (line 1h), so earned income.
+      + (t.retirement1099Rs ?? []).filter((x) => (x.recipient ?? "primary") === who && x.distributionCode === "3" && x.disabilityBeforeRetirementAge
+        && (who === "primary" || t.filingStatus === "MFJ")).reduce((a, x) => a + x.taxableAmount, 0));
     if (!near(l4, Math.max(0, earned("primary")))) bad.push(`4 ${l4} vs earned income`);
     if (!near(l5, t.filingStatus === "MFJ" ? Math.max(0, earned("spouse")) : l4)) bad.push(`5 ${l5}`);
     if (!near(l6, Math.min(l3, l4, l5))) bad.push(`6 ${l6}`);
@@ -747,7 +750,10 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
       const family = k("line1.family") === "Yes";
       const ageEnd = t.taxYear - Number(((who === "spouse" ? t.spouseDateOfBirth : t.dateOfBirth) ?? "").split("/")[2]);
       const married = t.filingStatus === "MFJ" || t.filingStatus === "MFS";
-      const l3 = HSA_LIMIT[t.taxYear][family ? "family" : "self"] + (ageEnd >= 55 && !(married && family) ? HSA_CATCH_UP : 0);
+      // Part-year coverage: the Line 3 Limitation Chart (each covered month's amount ÷ 12).
+      const months = t.hsa?.[who]?.months;
+      const covered = months ? months.self + months.family : 12;
+      const l3 = round2((HSA_LIMIT[t.taxYear][family ? "family" : "self"] + (ageEnd >= 55 && !(married && family) ? HSA_CATCH_UP : 0)) * covered / 12);
       if (!near(n0(k("line3")), l3)) bad.push(`${who} 3 vs ${l3}`);
       const l12 = Math.max(0, round2(n0(k("line8")) - n0(k("line11"))));
       if (!near(n0(k("line12")), l12) || !near(n0(k("line13")), Math.min(n0(k("line2")), l12))) bad.push(`${who} 12/13`);
@@ -764,6 +770,17 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     tie(2, "8889-13-equals-sch1-13", round2(sum13), n0(s1("line13")), "Σ Form 8889 line 13 vs Schedule 1 line 13");
     tie(2, "8889-16-equals-sch1-8f", round2(sum16), n0(s1("line8f")), "Σ Form 8889 line 16 vs Schedule 1 line 8f");
     tie(2, "8889-17b-equals-sch2-17c", round2(sum17), docs.f1040s2?.length ? n0(s2("line17c")) : 0, "Σ Form 8889 line 17b vs Schedule 2 line 17c");
+  }
+  // ── Forms W-2G and 8283 ──
+  const w2gDocs = (docs.fw2g ?? []).map((run) => keyed(run, "fw2g"));
+  const w2gExpected = (t.gamblingWinnings ?? []).filter((g) => g.recipient !== "spouse" || t.filingStatus === "MFJ").length;
+  if (w2gExpected || w2gDocs.length) {
+    checks.push({ phase: 2, id: "w2g-one-per-record", ok: w2gDocs.length === w2gExpected, detail: `${w2gDocs.length} W-2G(s), ${w2gExpected} record(s)` });
+    tie(2, "w2g-box1-equals-sch1-8b", round2(w2gDocs.reduce((a, k) => a + n0(k("CopyB.box1")), 0)), n0(s1("line8b")), "Σ W-2G box 1 vs Schedule 1 line 8b");
+  }
+  if (docs.f8283?.length && docs.f1040sa?.length) {
+    const fmv = round2(docs.f8283.reduce((a, run) => { const k = keyed(run, "f8283"); return a + ["A", "B", "C", "D"].reduce((b, r) => b + n0(k(`row${r}.fmv`)), 0); }, 0));
+    tie(2, "8283-fmv-equals-schA-12", fmv, n0(keyed(docs.f1040sa[0], "f1040sa")("line12")), "Σ Form 8283 Section A (h) vs Schedule A line 12");
   }
   // ── Schedule R, Form 8606, Form 4684: their result ties to the 1040 schedules ──
   if (docs.f1040sr?.length) {
