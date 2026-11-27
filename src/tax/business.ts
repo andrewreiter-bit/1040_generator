@@ -128,7 +128,8 @@ export function scheduleSE(owner: Person, cs: ScheduleCLines[], w2s: W2Record[],
   const netEarnings = belowMinimum ? 0 : line4a;
   const selfEmploymentEarnings = netEarnings;
   const wageBase = yearConstants(taxYear).ssWageBase;
-  const socialSecurityWages = sum(w2s.filter((w) => (w.employee ?? "primary") === owner).map((w) => w.socialSecurityWages));
+  // Line 8a: Social Security wages and tips (W-2 boxes 3 and 7).
+  const socialSecurityWages = sum(w2s.filter((w) => (w.employee ?? "primary") === owner).map((w) => w.socialSecurityWages + (w.socialSecurityTips ?? 0)));
   const remainingBase = Math.max(0, R(wageBase - socialSecurityWages));
   const socialSecurityTax = R(Math.min(selfEmploymentEarnings, remainingBase) * SE_TAX.socialSecurityRate);
   const medicareTax = R(selfEmploymentEarnings * SE_TAX.medicareRate);

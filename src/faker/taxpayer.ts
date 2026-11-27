@@ -49,6 +49,41 @@ export interface W2Record {
   box12?: Array<{ code: string; amount: number }>;
   /** Box 13 "Retirement plan": covered by a plan at work. Omitted = covered when box 12 shows an elective deferral. */
   retirementPlan?: boolean;
+  /** Box 7, Social Security tips (included in boxes 1 and 5; box 3 excludes them, boxes 3 + 7 ≤ the wage base). */
+  socialSecurityTips?: number;
+  /**
+   * Tips are qualified tips (§ 224): received in an occupation on Treasury's list of occupations that
+   * customarily received tips, from an employer that isn't a specified service trade or business. For
+   * 2025 the employee can use box 7 as the qualified amount (Schedule 1-A instructions, method 1).
+   */
+  tippedOccupation?: string;
+  /**
+   * Qualified overtime compensation (§ 225): the FLSA premium ("half" of time-and-a-half), included in
+   * box 1. For 2025 the employer may report it in box 14; the model prints it there.
+   */
+  qualifiedOvertime?: number;
+}
+
+/**
+ * A loan for a vehicle (Schedule 1-A Part IV, § 163(h)(4)). Interest is qualified passenger vehicle
+ * loan interest only if the loan was originated after 2024 by the taxpayer, for personal use, secured
+ * by a first lien, and the vehicle's original use began with the taxpayer and its final assembly was
+ * in the United States (under 14,000 lbs; car, minivan, van, SUV, pickup or motorcycle).
+ */
+export interface VehicleLoan {
+  vin: string;
+  /** Loan origination date (MM/DD/YYYY). */
+  originated: string;
+  /** Interest paid or accrued this year. */
+  interestPaid: number;
+  /** Original use began with the taxpayer (a new vehicle). */
+  newVehicle: boolean;
+  /** Final assembly in the United States. */
+  usAssembly: boolean;
+  personalUse: boolean;
+  firstLien: boolean;
+  /** Part deducted elsewhere (Schedule C, E or F): line 22 column (ii). */
+  deductedElsewhere?: number;
 }
 
 export interface Interest1099 {
@@ -603,6 +638,8 @@ export interface FakeTaxpayer {
   /** Cash gifts to § 170(b)(1)(A) charities (not donor-advised funds or § 509(a)(3) organizations) by a filer who
    *  doesn't itemize: 2026 Form 1040 line 12f, up to $1,000 ($2,000 joint). Itemizers' cash gifts are in `itemized`. */
   charitableCashGifts?: number;
+  /** Vehicle loans with interest paid this year (Schedule 1-A Part IV, 2025–2028). */
+  vehicleLoans?: VehicleLoan[];
   /** MFS only: didn't have the same principal home as the spouse during the last 6 months of the year (§ 32(d)(2)(B)(ii)(I)). */
   mfsApartLast6Months?: boolean;
   /** MFS only: a written separation agreement or decree of separate maintenance, and not in the spouse's household at year end (§ 32(d)(2)(B)(ii)(II)). */
