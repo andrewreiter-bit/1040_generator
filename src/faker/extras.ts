@@ -62,7 +62,10 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   const hsaPartGo = faker.datatype.boolean({ probability: 0.25 });
   const hsaMonths = faker.number.int({ min: 6, max: 11 });
   const gambleGo = faker.datatype.boolean({ probability: 0.05 });
-  const gambleAmt = dollars(faker, 1200, 18000);
+  const gambleDrawn = dollars(faker, 1200, 18000);
+  // 2026: the W-2G reporting threshold is $2,000 (W-2G instructions, 01/2026), so the same draw is
+  // mapped onto $2,000–$18,000 (no extra draw; 2023–2025 amounts are unchanged).
+  const gambleAmt = y >= 2026 ? round2(2000 + (gambleDrawn - 1200) * (16000 / 16800)) : gambleDrawn;
   const gambleLottery = faker.datatype.boolean({ probability: 0.35 });
   const gambleSpouse = faker.datatype.boolean({ probability: 0.3 });
   const gamblePayer = { name: `${faker.company.name()} Casino`, tin: `${faker.number.int({ min: 10, max: 99 })}-${faker.string.numeric(7)}`,
@@ -175,6 +178,13 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
   if (t.filingStatus === "MFS" && (t.mfsApartLast6Months || t.mfsLegallySeparated) && !t.dependentCare) {
     const care = buildDependentCare(faker, t, true);
     if (care) t.dependentCare = care;
+  }
+  // 2026: cash gifts by a household that doesn't itemize (Form 1040 line 12f, § 170(p)): 60% give
+  // $100–$3,000. Drawn only for 2026 and after every other draw, so 2023–2025 households don't move.
+  if (y >= 2026 && t.takesStandardDeduction) {
+    const gives = faker.datatype.boolean({ probability: 0.6 });
+    const amount = dollars(faker, 100, 3000);
+    if (gives) t.charitableCashGifts = amount;
   }
 
   // ── Itemizers: reallocations that keep Schedule A line 17 ──

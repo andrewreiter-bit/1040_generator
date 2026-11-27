@@ -5,7 +5,7 @@
  * Every line goes through the return's Rounder (cents or whole dollars).
  */
 import { FakeTaxpayer, ScheduleCBusiness, ScheduleCExpenses, W2Record } from "../faker/taxpayer";
-import { QBI_PHASE_IN_RANGE, QBI_RATE, SE_TAX, SIMPLIFIED_HOME_OFFICE, yearConstants } from "../config/tax-year";
+import { QBI_RATE, SE_TAX, SIMPLIFIED_HOME_OFFICE, yearConstants } from "../config/tax-year";
 import { Rounder, sumWith } from "./rounding";
 
 export type Person = "primary" | "spouse";
@@ -45,6 +45,18 @@ export interface ScheduleCLines {
 }
 
 /** Business share (business ÷ total miles) of the vehicle's loan interest and personal property tax, unrounded. */
+/**
+ * Schedule C line 9 at the standard mileage rate, before parking and tolls: business miles × the
+ * year's rate. 2026's rate changed on July 1 (72.5¢, then 76¢; 2026 Schedule C instructions), so
+ * miles driven July–December (`businessMilesSecondHalf`) use the second rate.
+ */
+export function standardMileageAmount(v: { businessMiles: number; businessMilesSecondHalf?: number }, taxYear: number): number {
+  const c = yearConstants(taxYear);
+  if (c.standardMileageRateSecondHalf === undefined) return v.businessMiles * c.standardMileageRate;
+  const second = v.businessMilesSecondHalf ?? 0;
+  return (v.businessMiles - second) * c.standardMileageRate + second * c.standardMileageRateSecondHalf;
+}
+
 export function vehicleBusinessShare(b: ScheduleCBusiness): { pct: number; interest: number; tax: number } {
   const v = b.vehicle;
   if (!v) return { pct: 0, interest: 0, tax: 0 };
@@ -66,7 +78,7 @@ export function scheduleC(b: ScheduleCBusiness, taxYear: number, R: Rounder): Sc
   const expenseLines: Record<string, number> = {};
   for (const [line, key] of EXPENSE_LINES) expenseLines[line] = R(b.expenses[key] ?? 0);
   expenseLines["9"] = b.vehicle
-    ? R(b.vehicle.businessMiles * yearConstants(taxYear).standardMileageRate + b.vehicle.parkingTolls)
+    ? R(standardMileageAmount(b.vehicle, taxYear) + b.vehicle.parkingTolls)
     : 0;
   // Standard mileage: the business share of car loan interest and personal property tax is
   // deductible too (Pub 463), but line 9 holds only miles × rate plus parking and tolls
@@ -196,7 +208,7 @@ export function form8995(
   const sum = (xs: number[]) => sumWith(R, xs);
   const qbiByBusiness = rows.map((x) => x.qbi);
   const thr = yearConstants(t.taxYear).qbiThreshold;
-  const threshold = t.filingStatus === "MFJ" ? thr.joint : thr.other;
+  const threshold = t.filingStatus === "MFJ" ? thr.joint : t.filingStatus === "MFS" ? thr.mfs ?? thr.other : thr.other;
   const totalQbi = sum(qbiByBusiness);
   const priorYearLoss = -R(t.priorYearQbiLoss ?? 0);
   const combined = R(totalQbi + priorYearLoss);
@@ -259,8 +271,9 @@ export function form8995A(
   const sum = (xs: number[]) => sumWith(R, xs);
   const joint = t.filingStatus === "MFJ";
   const y = yearConstants(t.taxYear).qbiThreshold;
-  const threshold = joint ? y.joint : y.other;
-  const range = joint ? QBI_PHASE_IN_RANGE.joint : QBI_PHASE_IN_RANGE.other;
+  const threshold = joint ? y.joint : t.filingStatus === "MFS" ? y.mfs ?? y.other : y.other;
+  const pir = yearConstants(t.taxYear).qbiPhaseInRange;
+  const range = joint ? pir.joint : pir.other;
   const ti = R(taxableIncomeBeforeQbi);
   const over = Math.max(0, ti - threshold);
   const inRange = ti > threshold && ti < threshold + range;

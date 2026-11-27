@@ -1,5 +1,5 @@
 /**
- * Form 8962, premium tax credit (PTC), 2023–2025, from each year's form and instructions:
+ * Form 8962, premium tax credit (PTC), 2023–2026, from each year's form and instructions:
  *
  *   Line 1   tax family size: the filer, the spouse on a joint return, and each dependent
  *   Line 2a  modified AGI: AGI + tax-exempt interest (none modelled) + Social Security
@@ -20,6 +20,11 @@
  * abandonment, `ptcMfsException`) the filer can't take the PTC, so line 11(e) and line 24 are
  * $0 and every advance payment is excess, repaid up to the Table 5 limit. With the exception
  * the credit is figured as usual.
+ *
+ * 2026 (2026 draft Form 8962 instructions; OBBBA § 71305; Rev. Proc. 2025-25): the expanded
+ * 2021–2025 table has expired, so Table 2 runs from 2.10% (under 133%) to 9.96% (300–400%), and
+ * household income over 400% of the poverty line gets no PTC. There's no repayment limitation:
+ * every excess advance payment is repaid (no line 28 cap).
  *
  * Not modelled (reported as unsupported): household income under 100% of the poverty line, and
  * the monthly calculation, allocation and year-of-marriage parts.
@@ -45,8 +50,26 @@ export interface Form8962Lines {
   unsupported: string[];
 }
 
-/** Table 2, in basis points: exact tenths of a basis point, rounded half up. */
-export function applicableFigure(pct: number): number {
+/**
+ * 2026 applicable percentage table (Rev. Proc. 2025-25 § 3.01): [low %, high %) with the initial
+ * and final percentages in basis points; between them the figure rises in a straight line.
+ */
+const TABLE_2026: Array<[number, number, number, number]> = [
+  [0, 133, 210, 210], [133, 150, 314, 419], [150, 200, 419, 660], [200, 250, 660, 844], [250, 300, 844, 996], [300, 401, 996, 996],
+];
+
+/**
+ * Table 2, the applicable figure for line 5's whole percentage. 2023–2025: 0 to 150%, rising 2
+ * points per 50 to 6% at 300%, then 2.5 per 100 to 8.5% at 400% and above. 2026: the Rev. Proc.
+ * 2025-25 bands, interpolated. Both in exact integers, rounded half up to a basis point.
+ */
+export function applicableFigure(pct: number, taxYear = 2025): number {
+  if (taxYear >= 2026) {
+    const [lo, hi, a, b] = TABLE_2026.find(([l, h]) => pct >= l && pct < h) ?? TABLE_2026[TABLE_2026.length - 1];
+    const span = hi - lo;
+    const num = a * span + (b - a) * (pct - lo); // basis points × span
+    return Math.floor((2 * num + span) / (2 * span)) / 10000;
+  }
   if (pct <= 150) return 0;
   if (pct >= 400) return 0.085;
   const tenths = pct <= 300 ? (Math.min(pct, 300) - 150) * 40 : 6000 + (pct - 300) * 25;
@@ -81,20 +104,23 @@ export function form8962(
   const { table, amount: line4 } = povertyLine(t, line1);
   const line5 = line3 > line4 * 4 ? 401 : Math.floor((line3 * 100) / line4 + 1e-9);
   if (line5 < 100 && !ineligibleMfs) unsupported.push("household income under 100% of the federal poverty line (Form 8962 line 5)");
-  const line7 = applicableFigure(line5);
+  const line7 = applicableFigure(line5, t.taxYear);
+  // 2026: over 400% of the poverty line, no PTC (only the reconciliation).
+  const overCap = t.taxYear >= 2026 && line5 > 400;
   const line8a = contributionAmount(line3, line7);
   const line8b = Math.round(line8a / 12);
   const a = sum(policies.map((p) => p.annualPremium));
   const b = sum(policies.map((p) => p.annualSlcsp));
   const c = line8a;
   const d = Math.max(0, R(b - c));
-  const e = ineligibleMfs ? 0 : Math.min(a, d);
+  const e = ineligibleMfs || overCap ? 0 : Math.min(a, d);
   const f = sum(policies.map((p) => p.annualAdvancePayments));
   const line24 = e, line25 = f;
   const line26 = line24 >= line25 ? R(line24 - line25) : undefined;
   const line27 = line25 > line24 ? R(line25 - line24) : 0;
   const tier = line5 < 200 ? 0 : line5 < 300 ? 1 : line5 < 400 ? 2 : undefined;
-  const line28 = line27 > 0 && tier !== undefined ? PTC_REPAYMENT_LIMIT[t.taxYear][tier][t.filingStatus === "Single" ? 0 : 1] : undefined;
+  const limits = PTC_REPAYMENT_LIMIT[t.taxYear]; // none from 2026
+  const line28 = line27 > 0 && tier !== undefined && limits ? limits[tier][t.filingStatus === "Single" ? 0 : 1] : undefined;
   const line29 = line27 > 0 ? (line28 === undefined ? line27 : Math.min(line27, line28)) : 0;
   return {
     line1, line2a, line2b, line3, table, line4, line5, line7, line8a, line8b,

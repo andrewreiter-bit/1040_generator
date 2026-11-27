@@ -102,11 +102,11 @@ export function buildRetirement1099Rs(faker: Faker, t: FakeTaxpayer): Retirement
 }
 
 /** § 402(g) elective deferral limit and the age-50 catch-up (IRS cost-of-living notices). */
-const DEFERRAL_LIMIT: Record<number, number> = { 2023: 22500, 2024: 23000, 2025: 23500 };
-const DEFERRAL_CATCH_UP = 7500;
+const DEFERRAL_LIMIT: Record<number, number> = { 2023: 22500, 2024: 23000, 2025: 23500, 2026: 24500 };
+const DEFERRAL_CATCH_UP: Record<number, number> = { 2023: 7500, 2024: 7500, 2025: 7500, 2026: 8000 };
 /** IRA contribution limit and the age-50 catch-up. */
-const IRA_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000 };
-const IRA_CATCH_UP = 1000;
+const IRA_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000, 2026: 7500 };
+const IRA_CATCH_UP: Record<number, number> = { 2023: 1000, 2024: 1000, 2025: 1000, 2026: 1100 };
 /** Draw Roth contributions only well below the Roth IRA income phase-out (it starts at $138,000 / $218,000 joint for 2023). */
 const ROTH_INCOME_CEILING = { joint: 190000, other: 120000 };
 
@@ -124,8 +124,8 @@ export function addRetirementSavings(faker: Faker, t: FakeTaxpayer, ssWageBase: 
   const birthYear = (dob: string | null) => (dob ? Number(dob.split("/")[2]) : t.taxYear);
   const age = (who: "primary" | "spouse") => t.taxYear - birthYear(who === "spouse" ? t.spouseDateOfBirth : t.dateOfBirth);
   const remaining: Record<"primary" | "spouse", number> = {
-    primary: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("primary") >= 50 ? DEFERRAL_CATCH_UP : 0),
-    spouse: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("spouse") >= 50 ? DEFERRAL_CATCH_UP : 0),
+    primary: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("primary") >= 50 ? DEFERRAL_CATCH_UP[t.taxYear] : 0),
+    spouse: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("spouse") >= 50 ? DEFERRAL_CATCH_UP[t.taxYear] : 0),
   };
   for (const w of t.w2Records) {
     if (!faker.datatype.boolean({ probability: 0.4 })) continue;
@@ -146,7 +146,7 @@ export function addRetirementSavings(faker: Faker, t: FakeTaxpayer, ssWageBase: 
   for (const who of people) {
     const mfsTogether = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false;
     if (!faker.datatype.boolean({ probability: 0.1 }) || income > ceiling || mfsTogether) continue;
-    const max = (IRA_LIMIT[t.taxYear] ?? 7000) + (age(who) >= 50 ? IRA_CATCH_UP : 0);
+    const max = (IRA_LIMIT[t.taxYear] ?? 7000) + (age(who) >= 50 ? IRA_CATCH_UP[t.taxYear] : 0);
     t.rothIraContributions = { ...(t.rothIraContributions ?? {}), [who]: round2(Math.min(max, dollars(faker, 500, max))) };
   }
 }

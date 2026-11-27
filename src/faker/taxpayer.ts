@@ -121,6 +121,8 @@ export interface ScheduleCBusiness {
    */
   vehicle?: {
     businessMiles: number; commutingMiles: number; otherMiles: number; placedInService: string; parkingTolls: number;
+    /** 2026: business miles driven July 1–December 31 (the 76¢ rate); the rest use 72.5¢. */
+    businessMilesSecondHalf?: number;
     loanInterest?: number; personalPropertyTax?: number;
   };
   /** Simplified-method home office: square feet used for business (line 30b) and of the whole home (30a). */
@@ -172,7 +174,8 @@ export interface CapitalAssetSale {
  * attributable to a federally declared disaster (not deductible for 2018–2025 without gains).
  */
 export interface CasualtyEvent {
-  kind: "federal" | "qualified" | "other";
+  /** "state": a State declared disaster (deductible from 2026, § 165(h)(5)). */
+  kind: "federal" | "qualified" | "state" | "other";
   description?: string;
   /** FEMA declaration number ("DR-…" or "EM-…") for a federally declared disaster. */
   femaNumber?: string;
@@ -597,6 +600,9 @@ export interface FakeTaxpayer {
   ssa1099s?: SSA1099[];
   /** MFS only: lived with the spouse at any time during the year (Social Security base amount $0). Omitted = yes. */
   mfsLivedWithSpouse?: boolean;
+  /** Cash gifts to § 170(b)(1)(A) charities (not donor-advised funds or § 509(a)(3) organizations) by a filer who
+   *  doesn't itemize: 2026 Form 1040 line 12f, up to $1,000 ($2,000 joint). Itemizers' cash gifts are in `itemized`. */
+  charitableCashGifts?: number;
   /** MFS only: didn't have the same principal home as the spouse during the last 6 months of the year (§ 32(d)(2)(B)(ii)(I)). */
   mfsApartLast6Months?: boolean;
   /** MFS only: a written separation agreement or decree of separate maintenance, and not in the spouse's household at year end (§ 32(d)(2)(B)(ii)(II)). */

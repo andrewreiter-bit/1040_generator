@@ -16,7 +16,7 @@
 import { Faker } from "@faker-js/faker";
 import { ScheduleCBusiness, ScheduleCExpenses } from "./taxpayer";
 import { SIMPLIFIED_HOME_OFFICE, yearConstants } from "../config/tax-year";
-import { scheduleC, vehicleBusinessShare } from "../tax/business";
+import { scheduleC, standardMileageAmount, vehicleBusinessShare } from "../tax/business";
 import { cents } from "../tax/rounding";
 
 /** Principal business / Schedule C line B codes (from the Schedule C instructions' code list). */
@@ -89,10 +89,13 @@ export function buildScheduleC(
   const wantsHomeOffice = faker.datatype.boolean({ probability: 0.35 });
   const homeOfficeSqFt = faker.number.int({ min: 80, max: SIMPLIFIED_HOME_OFFICE.maxSqFt });
   const homeTotalSqFt = faker.number.int({ min: 900, max: 3200 });
-  const paid1099Payments = (expenses.contractLabor ?? 0) >= 600;
+  // Line I: payments that require Forms 1099 — $600 through 2025, $2,000 from 2026 (§ 6041(a); Rev. Proc. 2025-32 § 2.15).
+  const paid1099Payments = (expenses.contractLabor ?? 0) >= (taxYear >= 2026 ? 2000 : 600);
 
   // Line 28 total, exactly as the engine adds it (meals at 50%, vehicle at the mileage rate).
-  const vehicleExpense = vehicle ? round2(vehicle.businessMiles * yearConstants(taxYear).standardMileageRate + vehicle.parkingTolls) : 0;
+  // 2026: half the business miles fall after June 30 (the 76¢ rate); no extra draw, so nothing else moves.
+  if (vehicle && yearConstants(taxYear).standardMileageRateSecondHalf !== undefined) (vehicle as NonNullable<ScheduleCBusiness["vehicle"]>).businessMilesSecondHalf = Math.floor(vehicle.businessMiles / 2);
+  const vehicleExpense = vehicle ? round2(standardMileageAmount(vehicle, taxYear) + vehicle.parkingTolls) : 0;
   const listed = Object.entries(expenses)
     .filter(([k]) => k !== "otherExpenseItems" && k !== "mealsTotal")
     .reduce((s, [, v]) => s + (v as number), 0);
