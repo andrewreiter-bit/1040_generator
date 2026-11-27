@@ -1,5 +1,9 @@
 /**
- * Schedule A (itemized deductions), 2023–2025 layout. Only the lines the model
+ * Schedule A (itemized deductions), 2023–2025 layout, with the 2026 rule changes (OBBBA; 2026
+ * draft Form 1040 instructions, What's New): gambling losses limited to 90% of the losses (and to
+ * winnings, § 165(d)); charitable gifts deductible only above 0.5% of AGI (§ 170(b)(1)(I)) —
+ * applied here to the year's gifts (lines 11–12), not the carryover; and State declared disasters
+ * counted like Federally declared ones (§ 165(h)(5)). The § 68 limit is applied in computeReturn. Only the lines the model
  * carries: medical (with the 7.5% floor), state and local taxes (with the SALT
  * cap), home mortgage interest and points, investment interest (Form 4952,
  * line 9), gifts to charity with the carryover
@@ -14,7 +18,7 @@
  * 60% cash within 60%.
  */
 import { FakeTaxpayer } from "../faker/taxpayer";
-import { MEDICAL_AGI_FLOOR, saltCap } from "../config/tax-year";
+import { MEDICAL_AGI_FLOOR, OBBBA_2026, saltCap } from "../config/tax-year";
 import { includedW2s } from "./household";
 import { Rounder, sumWith } from "./rounding";
 
@@ -24,6 +28,8 @@ export interface ScheduleALines {
   saltCap: number; line5e: number; line7: number;
   line8a: number; line8c: number; line8e: number; line9: number; line10: number;
   line11: number; line12: number; line13: number; line14: number;
+  /** 2026 on: the 0.5%-of-AGI floor taken off the year's gifts (§ 170(b)(1)(I)). */
+  charityFloor: number;
   /** Line 15: casualty and theft losses from federally declared disasters (Form 4684 line 18). */
   line15: number;
   /** Line 16: gambling losses plus a net qualified disaster loss (Form 4684 line 15). */
@@ -62,7 +68,9 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
   const line11 = by ? sum([by.cash60 ?? 0, by.cash30 ?? 0]) : R(it.charityCash ?? 0);
   const line12 = by ? sum([by.nonCash50 ?? 0, by.nonCash30 ?? 0, by.capitalGain30 ?? 0, by.capitalGain20 ?? 0]) : R(it.charityNonCash ?? 0);
   const line13 = R(it.charityCarryover ?? 0);
-  const line14 = sum([line11, line12, line13]);
+  const y26 = t.taxYear >= OBBBA_2026.firstYear;
+  const charityFloor = y26 ? Math.min(sum([line11, line12]), R(agi * OBBBA_2026.charityFloorRate)) : 0;
+  const line14 = R(sum([line11, line12, line13]) - charityFloor);
   let charityLimitMayApply: boolean;
   if (by) {
     const onlyCash60 = line13 === 0 && line14 === R(by.cash60 ?? 0);
@@ -70,7 +78,7 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
   } else {
     charityLimitMayApply = line11 > agi * 0.6 || line12 > agi * 0.3 || (line13 > 0 && line14 > agi * 0.2);
   }
-  const gamblingLosses = Math.min(R(it.gamblingLosses ?? 0), R(gamblingWinnings));
+  const gamblingLosses = Math.min(R((it.gamblingLosses ?? 0) * (y26 ? OBBBA_2026.wageringLossRate : 1)), R(gamblingWinnings));
   // Form 4684 Section A, per event: the smaller of basis or the drop in value, less insurance;
   // less $100 ($500 for a qualified disaster loss). Losses not from a federally declared disaster
   // offset only casualty gains (2018–2025), and there are none modelled, so they drop out.
@@ -86,7 +94,8 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
       const floor = e.kind === "qualified" ? 500 : 100;
       return { kind: e.kind, loss, floor, net: Math.max(0, R(loss - floor)) };
     });
-    const fed = sum(events.filter((e) => e.kind === "federal").map((e) => e.net));
+    // From 2026 a State declared disaster counts like a Federally declared one; before, it drops out.
+    const fed = sum(events.filter((e) => e.kind === "federal" || (y26 && e.kind === "state")).map((e) => e.net));
     qualifiedDisasterLoss = sum(events.filter((e) => e.kind === "qualified").map((e) => e.net));
     const l14 = sum([fed, qualifiedDisasterLoss]);
     const l17 = R(agi * 0.1);
@@ -97,7 +106,7 @@ export function scheduleA(t: FakeTaxpayer, agi: number, R: Rounder, gamblingWinn
   const line17 = sum([line4, line7, line10, line14, line15, line16]);
   return {
     line1, line2, line3, line4, line5a, salesTaxElected: it.stateLocalTax?.kind === "sales", line5b, line5c, line5d,
-    saltCap: cap, line5e, line7, line8a, line8c, line8e, line9, line10, line11, line12, line13, line14, line15, line16, line17,
+    saltCap: cap, line5e, line7, line8a, line8c, line8e, line9, line10, line11, line12, line13, line14, charityFloor, line15, line16, line17,
     gamblingLosses, qualifiedDisasterLoss, form4684, casualtyUnsupported,
     electToItemize: !!it.electToItemize, charityLimitMayApply,
   };

@@ -35,7 +35,7 @@ import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/document
 import { EXPENSE_LINES } from "../src/tax/business";
 import { eicChildren, includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
 import { zipMatchesState } from "../src/faker/zip";
-import { AMT, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
+import { AMT, assertFormYear, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
@@ -481,7 +481,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
       const per = (who: "primary" | "spouse", dob: string | null) => {
         const contrib = ira[who] ?? 0;
         if (!contrib || (who === "spouse" && !joint)) return 0;
-        const limit = IRA_CONTRIBUTION_LIMIT[t.taxYear] + (age(dob) >= 50 ? IRA_CATCH_UP : 0);
+        const limit = IRA_CONTRIBUTION_LIMIT[t.taxYear] + (age(dob) >= 50 ? IRA_CATCH_UP[t.taxYear] : 0);
         let l7 = limit;
         if (anyCovered) {
           const end = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false ? ends.mfsTogether : joint ? (covered(who) ? ends.joint : ends.spouseCovered) : ends.single;
@@ -737,7 +737,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
     const l4 = round2(line1 + n0(a62("line2a")) + n0(a62("line2i")));
     if (!near(n0(a62("line4")), l4)) bad.push(`4 vs 1 + 2a + 2i`);
     const k = t.filingStatus === "MFJ" || t.filingStatus === "QSS" ? "joint" : t.filingStatus === "MFS" ? "mfs" : "single";
-    const ex = Math.max(0, AMT[t.taxYear].exemption[k] - Math.max(0, l4 - AMT[t.taxYear].phaseoutStart[k]) * 0.25);
+    const ex = Math.max(0, AMT[t.taxYear].exemption[k] - Math.max(0, l4 - AMT[t.taxYear].phaseoutStart[k]) * AMT[t.taxYear].phaseoutRate);
     if (!near(n0(a62("line5")), ex)) bad.push(`5 ${a62("line5")} vs ${money(ex)}`);
     const l6 = Math.max(0, round2(l4 - ex));
     if (!near(n0(a62("line6")), l6)) bad.push("6 vs 4 − 5");
@@ -1041,6 +1041,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
 (async () => {
   const profiles: string[] = String(opts.profiles).split(",").map((s) => s.trim()).filter(Boolean);
   const years: number[] = String(opts.years).split(",").map((s) => parseInt(s, 10));
+  years.forEach(assertFormYear);
   const baseSeed = parseInt(opts.baseSeed, 10);
   const gate = parseInt(opts.gate, 10);
   const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "1040-validate-"));

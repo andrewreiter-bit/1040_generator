@@ -1,14 +1,15 @@
 /**
- * Form 6251, alternative minimum tax, 2023–2025 (each year's form and instructions).
+ * Form 6251, alternative minimum tax, 2023–2026 (each year's form and instructions; 2026 draft).
  *
  *   Line 1   AGI less total deductions (Form 1040 line 15, or line 11 − line 14 when that's
- *            negative). 2025 splits it (1a/1b) to add back the Schedule 1-A senior deduction,
- *            which the AMT treats as a personal exemption.
+ *            negative). 2025 on splits it (1a/1b) to add back the Schedule 1-A senior deduction,
+ *            which the AMT treats as a personal exemption. (The 2026 non-itemizer charitable
+ *            deduction stays in line 14, so it isn't added back.)
  *   Line 2a  taxes from Schedule A line 7 when itemizing, otherwise the standard deduction.
  *   Line 2i  incentive stock options exercised and held at year end: (fair market value −
  *            exercise price) × shares, per Form 3921. The other adjustments (2b–2h, 2j–3)
  *            aren't modelled.
- *   Line 5   exemption, less 25% of AMTI over the phase-out start
+ *   Line 5   exemption, less 25% (2026: 50%) of AMTI over the phase-out start
  *   Line 7   26% / 28% on the excess, or Part III (maximum capital gains rates) when there are
  *            qualified dividends or a net capital gain
  *   Line 10  regular tax (line 16) plus Schedule 2's excess advance PTC repayment; no foreign
@@ -52,7 +53,7 @@ export function form6251(t: FakeTaxpayer, args: {
   const line2a = args.itemizes ? R(args.scheduleALine7) : R(args.standardDeduction);
   const line2i = R(args.isoAdjustment);
   const line4 = R(line1 + line2a + line2i);
-  const line5 = Math.max(0, R(y.exemption[k] - Math.max(0, line4 - y.phaseoutStart[k]) * 0.25));
+  const line5 = Math.max(0, R(y.exemption[k] - Math.max(0, line4 - y.phaseoutStart[k]) * y.phaseoutRate));
   const line6 = Math.max(0, R(line4 - line5));
   let line7 = 0;
   let partIII: Form6251Lines["partIII"];
@@ -80,8 +81,9 @@ export function form6251(t: FakeTaxpayer, args: {
   const line9 = line7;
   const line10 = Math.max(0, R(args.regularTax + args.excessAptc));
   const line11 = Math.max(0, R(line9 - line10));
-  // Line 4: a separate filer above the MFS phase-out start + 4 × the MFS exemption adds an extra amount (not modelled).
-  const mfsLimit = y.phaseoutStart.mfs + 4 * y.exemption.mfs;
+  // Line 4: a separate filer above the point where the MFS exemption is fully phased out
+  // (start + exemption ÷ rate: 4× through 2025, 2× from 2026, e.g. $640,200) adds an extra amount (not modelled).
+  const mfsLimit = y.phaseoutStart.mfs + y.exemption.mfs / y.phaseoutRate;
   const unsupported = t.filingStatus === "MFS" && line4 > mfsLimit ? ["AMT: married filing separately with AMTI over the line 4 limit (extra add-back)"] : [];
   return { line1, line1a, line2a, line2i, line4, line5, line6, line7, line9, line10, line11, partIII, unsupported };
 }

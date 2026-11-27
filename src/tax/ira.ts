@@ -60,7 +60,7 @@ export function iraDeduction(
   const people: Person[] = ["primary", "spouse"];
   const covered = people.map((p, i) => (i === 0 || joint) && w2s.some((w) => (w.employee ?? "primary") === p && coveredByPlan(w))) as [boolean, boolean];
   const age = (p: Person) => t.taxYear - Number(((p === "primary" ? t.dateOfBirth : t.spouseDateOfBirth) ?? "").split("/")[2]);
-  const limitOf = (i: number) => IRA_CONTRIBUTION_LIMIT[t.taxYear] + (age(people[i]) >= 50 ? IRA_CATCH_UP : 0);
+  const limitOf = (i: number) => IRA_CONTRIBUTION_LIMIT[t.taxYear] + (age(people[i]) >= 50 ? IRA_CATCH_UP[t.taxYear] : 0);
   const ends = IRA_PHASEOUT_END[t.taxYear];
   const mfsTogether = t.filingStatus === "MFS" && t.mfsLivedWithSpouse !== false;
   const line5 = R(line9 - otherAdjustments);
@@ -84,7 +84,7 @@ export function iraDeduction(
   const earned = (p: Person) => sum(w2s.filter((w) => (w.employee ?? "primary") === p).map((w) => w.wages))
     + sum(ses.filter((s) => s.owner === p).map((s) => s.combined - s.deduction));
   const line10 = Math.max(0, R(earned("primary") + (joint ? earned("spouse") : 0)));
-  if (joint && line10 < 2 * IRA_CONTRIBUTION_LIMIT[t.taxYear] + [0, 1].filter((i) => age(people[i]) >= 50).length * IRA_CATCH_UP) {
+  if (joint && line10 < 2 * IRA_CONTRIBUTION_LIMIT[t.taxYear] + [0, 1].filter((i) => age(people[i]) >= 50).length * IRA_CATCH_UP[t.taxYear]) {
     unsupported.push("joint IRA deduction with compensation below the worksheet's limit (Pub 590-A)");
   }
   const line12 = [0, 1].map((i) => Math.min(line7[i], line10, contrib[i])) as [number, number];

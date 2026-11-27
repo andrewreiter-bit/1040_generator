@@ -15,7 +15,7 @@ import { applicableFigure, povertyLine } from "../tax/premium-tax-credit";
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 /** A 40-year-old's monthly benchmark (SLCSP) premium, roughly the national average. */
-const SLCSP_40: Record<number, number> = { 2023: 456, 2024: 477, 2025: 497 };
+const SLCSP_40: Record<number, number> = { 2023: 456, 2024: 477, 2025: 497, 2026: 625 };
 
 export function buildMarketplace(faker: Faker, t: FakeTaxpayer): Marketplace1095A[] | undefined {
   const takes = faker.datatype.boolean({ probability: 0.08 });
@@ -38,8 +38,9 @@ export function buildMarketplace(faker: Faker, t: FakeTaxpayer): Marketplace1095
   const fpl = povertyLine(t, ages.length + kids.length).amount;
   const pct = projected > fpl * 4 ? 401 : Math.floor((projected * 100) / fpl);
   if (pct < 100) return undefined;
-  const monthlyContribution = Math.round(Math.round(projected * applicableFigure(pct)) / 12);
-  const monthlyAdvance = Math.max(0, Math.min(monthlyPremium, round2(monthlySlcsp - monthlyContribution)));
+  const monthlyContribution = Math.round(Math.round(projected * applicableFigure(pct, t.taxYear)) / 12);
+  // 2026 on: no PTC over 400% of the poverty line, so the Marketplace pays no advance (no new draw).
+  const monthlyAdvance = t.taxYear >= 2026 && pct > 400 ? 0 : Math.max(0, Math.min(monthlyPremium, round2(monthlySlcsp - monthlyContribution)));
   return [{
     marketplaceId: `${t.state}-${faker.string.numeric(6)}`,
     policyNumber: faker.string.alphanumeric({ length: 10, casing: "upper" }),

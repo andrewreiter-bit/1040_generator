@@ -16,7 +16,6 @@ import { FakeTaxpayer } from "../faker/taxpayer";
 import {
   CREDIT_FOR_OTHER_DEPENDENTS,
   CTC_PHASEOUT_THRESHOLD,
-  EDUCATOR_EXPENSE_LIMIT,
   SENIOR_DEDUCTION,
   STUDENT_LOAN_INTEREST,
   additionalStandardDeduction,
@@ -24,6 +23,8 @@ import {
   standardDeduction,
   taxOnIncome,
   yearConstants,
+  QBI_MINIMUM,
+  OBBBA_2026,
 } from "../config/tax-year";
 import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount, separatedSpouse } from "./household";
 import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
@@ -123,6 +124,10 @@ export interface ReturnLines {
   spouseBlind: boolean;
   /** Line 12: standard deduction (with the 65+ add-on) or Schedule A, whichever is larger. */
   standardDeductionAmount: number;
+  /** 2026 on: Form 1040 line 12f, the § 170(p) charitable deduction for a filer who doesn't itemize. */
+  charitableDeduction: number;
+  /** 2026 on: the § 68 reduction of itemized deductions (included in `deduction`). */
+  itemizedLimitation: number;
   itemizes: boolean;
   scheduleA?: ScheduleALines;
   /** Form 4684 Section A totals; filed even without itemizing (a qualified disaster loss raises the standard deduction). */
@@ -138,7 +143,9 @@ export interface ReturnLines {
   youAre65: boolean;
   spouseIs65: boolean;
   deduction: number;           // 12 / 12e
-  qbiDeduction: number;        // 13 / 13a
+  qbiDeduction: number;        // 13 / 13a (2026: 13b)
+  /** 2026 on: § 199A(i) minimum deduction ($400 with active QBI of $1,000 or more). */
+  qbiMinimum?: { activeQbi: number; amount: number };
   /** 2025 Schedule 1-A (line 38 → Form 1040 line 13b); only Part V (seniors) is modelled. */
   schedule1A?: { magi: number; line33: number; line34: number; line35: number; line36a: number; line36b: number; line37: number; line38: number };
   additionalDeductions: number; // 13b
@@ -265,6 +272,10 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   }
 
   if (t.businessIncome != null && !t.scheduleCs?.length) unsupported.push("Schedule C business income given only as a net figure (no Schedule C detail)");
+  if (yearConstants(t.taxYear).standardMileageRateSecondHalf !== undefined
+    && (t.scheduleCs ?? []).some((b) => b.vehicle && b.vehicle.businessMilesSecondHalf === undefined)) {
+    unsupported.push("standard mileage without the July–December split of business miles (2026 rate change)");
+  }
   if (t.rentalIncome != null && !t.rentals?.length) unsupported.push("rental income given only as a net figure (no Schedule E detail)");
   const schEBase = t.rentals?.length ? scheduleE(t.rentals, R) : undefined;
   if ((schEBase?.columns.length ?? 0) > 3) unsupported.push("more than three rental properties (Schedule E continuation page)");
@@ -304,8 +315,8 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const gamblingWinnings = sum(w2gs.map((g) => g.winnings));
   const otherIncome = round2(gamblingWinnings + alaskaPfd + hsaDistributions);
   const educatorExpenses = sum([
-    Math.min(t.educatorExpenses?.primary ?? 0, EDUCATOR_EXPENSE_LIMIT),
-    joint ? Math.min(t.educatorExpenses?.spouse ?? 0, EDUCATOR_EXPENSE_LIMIT) : 0,
+    Math.min(t.educatorExpenses?.primary ?? 0, yearConstants(t.taxYear).educatorExpenseLimit),
+    joint ? Math.min(t.educatorExpenses?.spouse ?? 0, yearConstants(t.taxYear).educatorExpenseLimit) : 0,
   ]);
   const seTaxDeduction = sum(scheduleSEs.map((s) => s.deduction));
   const healthInsurance = bizDed.healthInsuranceTotal;
@@ -400,8 +411,16 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // A net qualified disaster loss can be added to the standard deduction (Schedule A line 16
   // instructions; Form 4684 line 15) when not itemizing.
   const standardWithDisaster = round2(standardDeductionAmount + (schA?.qualifiedDisasterLoss ?? 0));
-  const itemizes = itemizedAmount > standardWithDisaster || (!!schA && (schA.electToItemize || spouseItemizes));
-  const deduction = itemizes ? itemizedAmount : standardWithDisaster;
+  // 2026 on (§ 170(p); Form 1040 line 12f): a filer who doesn't itemize deducts cash gifts to
+  // 60%-limit charities, up to $1,000 ($2,000 joint). It counts when choosing whether to itemize.
+  const y26 = t.taxYear >= OBBBA_2026.firstYear;
+  const qualifyingCash = t.charitableCashGifts ?? t.itemized?.charityByLimit?.cash60 ?? t.itemized?.charityCash ?? 0;
+  const nonItemizerCharity = y26 && !spouseItemizes
+    ? Math.min(R(qualifyingCash), t.filingStatus === "MFJ" ? OBBBA_2026.nonItemizerCharity.joint : OBBBA_2026.nonItemizerCharity.other)
+    : 0;
+  const itemizes = itemizedAmount > round2(standardWithDisaster + nonItemizerCharity) || (!!schA && (schA.electToItemize || spouseItemizes));
+  const charitableDeduction = itemizes ? 0 : nonItemizerCharity;
+  let deduction = itemizes ? itemizedAmount : standardWithDisaster;
   if (schA) unsupported.push(...schA.casualtyUnsupported);
   // Form 4952 is filed (and its line 4g election made) only to claim the Schedule A deduction.
   const f4952 = itemizes ? f4952All : undefined;
@@ -446,14 +465,37 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   });
   if (qbiRows.length || t.priorYearQbiLoss) {
     // Form 8995 line 11: taxable income before the QBI deduction (2025: after line 13b).
-    qbi = form8995(qbiRows, Math.max(0, round2(agi - deduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R);
+    qbi = form8995(qbiRows, Math.max(0, round2(agi - deduction - charitableDeduction - additionalDeductions)), round2(qualifiedDividends + netCapitalGain), t, R);
   }
   // Above the threshold: Form 8995-A (W-2 wage / UBIA limit, SSTB phase-out, loss netting).
   const f8995a = qbi?.overThreshold
     ? form8995A(qbiRows, qbi.taxableIncomeBeforeQbi, qbi.netCapitalGain, t, R)
     : undefined;
-  const qbiDeduction = f8995a ? f8995a.line39 : qbi ? qbi.deduction : 0;
-  const totalDeductions = round2(deduction + qbiDeduction + additionalDeductions);
+  const regularQbiDeduction = f8995a ? f8995a.line39 : qbi ? qbi.deduction : 0;
+  // § 199A(i) (2026 on): at least $400 when active QBI — from trades or businesses the filer
+  // materially participates in (§ 469(h)) — totals $1,000 or more (Form 8995 2026 line 16).
+  let qbiMinimum: ReturnLines["qbiMinimum"];
+  if (t.taxYear >= QBI_MINIMUM.firstYear && qbiRows.length) {
+    const active = qbiRows.filter((row) => row.source.kind === "scheduleC"
+      ? (scheduleCs[row.source.index]?.business.materiallyParticipated ?? true)   // row index = included Schedule C
+      : !!t.realEstateProfessional && !!t.rentals?.[row.source.index]?.materialParticipation);   // Schedule E columns = t.rentals
+    const activeQbi = round2(active.reduce((a, row) => a + row.qbi, 0));
+    qbiMinimum = { activeQbi, amount: activeQbi >= QBI_MINIMUM.activeQbi ? QBI_MINIMUM.deduction : 0 };
+  }
+  const qbiDeduction = Math.max(regularQbiDeduction, qbiMinimum?.amount ?? 0);
+  // § 68 (2026 on): itemized deductions are reduced by 2/37 of the lesser of them or the amount by
+  // which taxable income before § 68 plus them — AGI less the Schedule 1-A and QBI deductions (the
+  // 2026 Form 1040 instructions' test) — exceeds the start of the 37% bracket.
+  let itemizedLimitation = 0;
+  if (y26 && itemizes) {
+    const start = yearConstants(t.taxYear).brackets[t.filingStatus === "MFJ" || t.filingStatus === "QSS" ? "mfj" : t.filingStatus === "MFS" ? "mfs" : t.filingStatus === "HOH" ? "hoh" : "single"].slice(-1)[0];
+    const excess = Math.max(0, round2(agi - additionalDeductions - qbiDeduction - start));
+    itemizedLimitation = R(Math.min(deduction, excess) * OBBBA_2026.itemizedLimitRate);
+    // The QBI deduction itself depends on taxable income after § 68: not modelled together.
+    if (itemizedLimitation > 0 && qbiDeduction > 0) unsupported.push("§ 68 itemized deduction limitation together with a QBI deduction");
+    deduction = round2(deduction - itemizedLimitation);
+  }
+  const totalDeductions = round2(deduction + charitableDeduction + qbiDeduction + additionalDeductions);
   const taxableIncome = Math.max(0, round2(agi - totalDeductions));
 
   // ── Tax ───────────────────────────────────────────────────────────────────
@@ -594,12 +636,12 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
 
   const result: ReturnLines = {
     wages, otherEarnedIncome, scheduleR: schR, taxableInterest, qualifiedDividends, ordinaryDividends, capitalGainDistributions,
-    capitalGain, netCapitalGain, scheduleDRequired, capital, retirement, socialSecurity, standardDeductionAmount, itemizes,
+    capitalGain, netCapitalGain, scheduleDRequired, capital, retirement, socialSecurity, standardDeductionAmount, charitableDeduction, itemizedLimitation, itemizes,
     // Form 4952 is also filed without itemizing when the § 163(d) limit alone disallows the interest
     // (line 8 is $0), to carry line 7 forward.
     scheduleA: itemizes ? schA : undefined, form4684: schA?.form4684,
     form4952: f4952 ?? (f4952All && f4952All.line8 === 0 && f4952All.line7 > 0 && !f4952All.line4g ? f4952All : undefined), scheduleE: schE, form8582: f8582, additionalIncome, totalIncome, adjustments, agi,
-    youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
+    youAre65, spouseIs65, youBlind, spouseBlind, deduction, qbiDeduction, qbiMinimum, schedule1A, additionalDeductions, totalDeductions, taxableIncome,
     // Form 8962 is filed only to claim the PTC or reconcile advance payments.
     tax, scheduleTwoPartOne, form6251: f6251, alternativeMinimumTax, excessAdvancePtc, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,

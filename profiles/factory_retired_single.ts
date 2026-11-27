@@ -6,7 +6,7 @@
  * credit needs tax to offset, so AGI must also be over the standard deduction. Married, head of
  * household and separate filers have no such window (their standard deductions exceed the
  * Schedule R limits), and a 65+ single filer has none in 2025 (the senior deduction). So:
- * - Disabled (every 2025 seed; 70% in 2023/2024): under 65, retired on permanent and total
+ * - Disabled (every 2025 and 2026 seed; 70% in 2023/2024): under 65, retired on permanent and total
  *   disability, with a code 3 pension received before minimum retirement age (Form 1040 line 1h,
  *   Schedule R box 2, line 11).
  * - Elderly (30% in 2023/2024): 65 or older with a fully taxable code 7 pension (box 1).

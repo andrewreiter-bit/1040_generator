@@ -39,9 +39,17 @@ export interface Form2441Lines {
   unsupported: string[];
 }
 
-export function dependentCareRate(agi: number): number {
-  if (agi <= 15000) return 0.35;
-  return Math.max(20, 35 - Math.ceil((agi - 15000) / 2000)) / 100;
+/**
+ * Line 8. Through 2025: 35%, less 1 point per $2,000 (or part) of AGI over $15,000, not below 20%.
+ * From 2026 (§ 21(a)(2) as amended by the OBBBA; 2026 Form 2441 line 8 phase-out schedule): 50%,
+ * less 1 point per $2,000 (or part) over $15,000 but not below 35%; then 1 more point per $2,000
+ * ($4,000 joint) or part over $75,000 ($150,000 joint), not below 20%.
+ */
+export function dependentCareRate(agi: number, taxYear = 2025, joint = false): number {
+  const steps = (over: number, per: number) => (over > 0 ? Math.ceil(over / per) : 0);
+  if (taxYear < 2026) return Math.max(20, 35 - steps(agi - 15000, 2000)) / 100;
+  const first = Math.max(35, 50 - steps(agi - 15000, 2000));
+  return Math.max(20, first - steps(agi - (joint ? 150000 : 75000), joint ? 4000 : 2000)) / 100;
 }
 
 export function isQualifyingCarePerson(t: FakeTaxpayer, i: number): boolean {
@@ -79,7 +87,7 @@ export function form2441(
   const line5 = t.filingStatus === "MFJ" ? Math.max(0, earned("spouse")) : line4;
   const line6 = Math.min(line3, line4, line5);
   const line7 = R(agi);
-  const line8 = dependentCareRate(line7);
+  const line8 = dependentCareRate(line7, t.taxYear, t.filingStatus === "MFJ");
   const line9a = R(line6 * line8);
   const line10 = Math.max(0, R(line18));
   if ((care.priorYearExpensesPaid ?? 0) > 0 && line10 > line9a) {

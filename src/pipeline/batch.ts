@@ -4,6 +4,7 @@ import { createTaxpayer } from "../faker/factory";
 import { FillResult } from "../filler/index";
 import { FORM_REGISTRY, FormEntry, getForm } from "../registry/forms";
 import { documentsFor, scheduleGaps } from "../tax/documents";
+import { assertFormYear } from "../config/tax-year";
 
 /** A form with an optional per-form submission count override. */
 export interface FormSpec {
@@ -75,6 +76,7 @@ export async function runBatch(opts: BatchOptions = {}): Promise<BatchResult> {
     forceReanalyze = false,
   } = opts;
 
+  assertFormYear(taxYear);
   const formSpecs = resolveFormSpecs(opts);
   const limit = pLimit(concurrency);
   const results: BatchResult["results"] = [];

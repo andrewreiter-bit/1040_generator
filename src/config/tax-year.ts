@@ -1,7 +1,7 @@
 import { FilingStatus } from "../faker/taxpayer";
 
 /**
- * Year-specific federal constants for tax years 2023–2025.
+ * Year-specific federal constants for tax years 2023–2026.
  *
  * Sources (checked against the IRS/SSA text):
  *   2023  Rev. Proc. 2022-38 (IRB 2022-45) §§ 3.01, 3.03, 3.05, 3.15
@@ -20,6 +20,15 @@ import { FilingStatus } from "../faker/taxpayer";
  *   Saver's credit AGI limits and line 9 table: each year's Form 8880 (2023, 2024, 2025).
  *   Student loan interest phase-out (§ 221(b)(2)): Rev. Proc. 2022-38 § 3.29, 2023-34 § 3.29, 2024-40 § 3.29.
  *   Educator expenses (§ 62(d)(3)): $300 per eligible educator for 2023–2025.
+ *   2026  Rev. Proc. 2025-32 § 4 (.01 rate tables, .03 capital gains, .05 CTC, .06 EIC, .10 AMT,
+ *         .12 educator $350, .14 standard deduction, .26 QBI, .29 student loan); Rev. Proc. 2025-19
+ *         (HSA); Notice 2025-67 (IRA $7,500 + $1,100 catch-up, IRA phase-outs, Saver's credit,
+ *         401(k) $24,500); Rev. Proc. 2025-25 (PTC applicable percentages); 2026 draft Form 8962
+ *         instructions (2025 poverty lines, no repayment cap, 400% limit); Pub. 15 (2026) (wage
+ *         base $184,500); 2026 draft Schedule C instructions (mileage 72.5¢ to June 30, 76¢ from
+ *         July 1); 2026 draft Form 6251 instructions (50% phase-out, MFS add-back over $640,200);
+ *         2026 draft Form 2441 instructions (line 8 phase-out schedule); § 164(b)(7) (SALT
+ *         $40,400 / $505,000); Alaska Dept. of Revenue (2026 PFD $1,200).
  */
 
 type StatusTable<T> = { single: T; mfj: T; mfs: T; hoh: T };
@@ -47,9 +56,15 @@ interface YearConstants {
   /** EIC: investment income must be at or under this. */
   eicInvestmentIncomeLimit: number;
   /** § 199A threshold amount: at or under it, Form 8995 (no W-2 wage / UBIA / SSTB limits). */
-  qbiThreshold: { joint: number; other: number };
+  qbiThreshold: { joint: number; other: number; mfs?: number };
+  /** § 199A(b)(3)(B) phase-in range above the threshold. */
+  qbiPhaseInRange: { joint: number; other: number };
+  /** § 62(d)(3) eligible educator expenses limit (Schedule 1 line 11). */
+  educatorExpenseLimit: number;
   /** Business standard mileage rate, dollars per mile (Schedule C line 9). */
   standardMileageRate: number;
+  /** 2026: the rate changed on July 1; miles driven July–December use this rate. */
+  standardMileageRateSecondHalf?: number;
   /** Student loan interest deduction phase-out start (MAGI); range is $15,000 ($30,000 joint). */
   studentLoanPhaseoutStart: { joint: number; other: number };
   /** Form 8880 Saver's credit: no credit when AGI is over these. */
@@ -85,6 +100,8 @@ const YEARS: Record<number, YearConstants> = {
     eicInvestmentIncomeLimit: 11000,
     qbiThreshold: { joint: 364200, other: 182100 },
     standardMileageRate: 0.655,
+    qbiPhaseInRange: { joint: 100000, other: 50000 },
+    educatorExpenseLimit: 300,
     saversCreditAgiLimit: { joint: 73000, hoh: 54750, other: 36500 },
     saversCreditBrackets: { joint: [43500, 47500, 73000], hoh: [32625, 35625, 54750], other: [21750, 23750, 36500] },
     studentLoanPhaseoutStart: { joint: 155000, other: 75000 },
@@ -110,6 +127,8 @@ const YEARS: Record<number, YearConstants> = {
     eicInvestmentIncomeLimit: 11600,
     qbiThreshold: { joint: 383900, other: 191950 },
     standardMileageRate: 0.67,
+    qbiPhaseInRange: { joint: 100000, other: 50000 },
+    educatorExpenseLimit: 300,
     saversCreditAgiLimit: { joint: 76500, hoh: 57375, other: 38250 },
     saversCreditBrackets: { joint: [46000, 50000, 76500], hoh: [34500, 37500, 57375], other: [23000, 25000, 38250] },
     studentLoanPhaseoutStart: { joint: 165000, other: 80000 },
@@ -135,9 +154,39 @@ const YEARS: Record<number, YearConstants> = {
     eicInvestmentIncomeLimit: 11950,
     qbiThreshold: { joint: 394600, other: 197300 },
     standardMileageRate: 0.70,
+    qbiPhaseInRange: { joint: 100000, other: 50000 },
+    educatorExpenseLimit: 300,
     saversCreditAgiLimit: { joint: 79000, hoh: 59250, other: 39500 },
     saversCreditBrackets: { joint: [47500, 51000, 79000], hoh: [35625, 38250, 59250], other: [23750, 25500, 39500] },
     studentLoanPhaseoutStart: { joint: 170000, other: 85000 },
+  },
+  2026: {
+    standardDeduction: { single: 16100, mfj: 32200, hoh: 24150 },
+    additionalStandardDeduction: { married: 1650, unmarried: 2050 },
+    brackets: {
+      mfj:    [24800, 100800, 211400, 403550, 512450, 768700],
+      hoh:    [17700, 67450, 105700, 201750, 256200, 640600],
+      single: [12400, 50400, 105700, 201775, 256225, 640600],
+      mfs:    [12400, 50400, 105700, 201775, 256225, 384350],
+    },
+    capitalGainsZeroMax:    { mfj: 98900, mfs: 49450, hoh: 66200, single: 49450 },
+    capitalGainsFifteenMax: { mfj: 613700, mfs: 306850, hoh: 579600, single: 545500 },
+    childTaxCreditPerChild: 2200,
+    additionalChildTaxCreditPerChild: 1700,
+    ssWageBase: 184500,
+    eicIncomeLimit: { other: [19540, 51593, 58629, 62974], mfj: [26820, 58863, 65899, 70244] },
+    eicEarnedIncomeAmount: [8680, 13020, 18290, 18290],
+    eicMaxCredit: [664, 4427, 7316, 8231],
+    eicPhaseoutStart: { other: [10860, 23890, 23890, 23890], mfj: [18140, 31160, 31160, 31160] },
+    eicInvestmentIncomeLimit: 12200,
+    qbiThreshold: { joint: 403500, other: 201750, mfs: 201775 },
+    qbiPhaseInRange: { joint: 150000, other: 75000 },
+    educatorExpenseLimit: 350,
+    standardMileageRate: 0.725,
+    standardMileageRateSecondHalf: 0.76,
+    saversCreditAgiLimit: { joint: 80500, hoh: 60375, other: 40250 },
+    saversCreditBrackets: { joint: [48500, 52500, 80500], hoh: [36375, 39375, 60375], other: [24250, 26250, 40250] },
+    studentLoanPhaseoutStart: { joint: 175000, other: 85000 },
   },
 };
 
@@ -175,8 +224,10 @@ export const MEDICAL_AGI_FLOOR = 0.075;
 export function saltCap(taxYear: number, status: FilingStatus, modifiedAgi: number): number {
   const half = status === "MFS" ? 0.5 : 1;
   if (taxYear < 2025) return 10000 * half;
-  const over = Math.max(0, modifiedAgi - 500000 * half);
-  return Math.max(40000 - 0.3 * over, 10000) * half;
+  // § 164(b)(7): $40,000 and $500,000 for 2025; $40,400 and $505,000 for 2026.
+  const [cap, threshold] = taxYear === 2025 ? [40000, 500000] : [40400, 505000];
+  const over = Math.max(0, modifiedAgi - threshold * half);
+  return Math.max(cap - 0.3 * over, 10000) * half;
 }
 
 /**
@@ -196,18 +247,21 @@ export const HSA_LIMIT: Record<number, { self: number; family: number }> = {
   2023: { self: 3850, family: 7750 },
   2024: { self: 4150, family: 8300 },
   2025: { self: 4300, family: 8550 },
+  2026: { self: 4400, family: 8750 },
 };
 export const HSA_CATCH_UP = 1000;
 
 /**
  * Alternative minimum tax (Form 6251, each year's form and instructions): the exemption and
- * where its 25% phase-out starts (single/HOH, joint/QSS, MFS), and where the 28% rate begins
- * on the taxable excess (MFS half).
+ * where its phase-out starts (single/HOH, joint/QSS, MFS), the phase-out rate (25% through
+ * 2025; 50% from 2026, § 55(d)(4)(A)(ii)(IV) as amended by the OBBBA), and where the 28% rate
+ * begins on the taxable excess (MFS half).
  */
-export const AMT: Record<number, { exemption: { single: number; joint: number; mfs: number }; phaseoutStart: { single: number; joint: number; mfs: number }; bracket: number }> = {
-  2023: { exemption: { single: 81300, joint: 126500, mfs: 63250 }, phaseoutStart: { single: 578150, joint: 1156300, mfs: 578150 }, bracket: 220700 },
-  2024: { exemption: { single: 85700, joint: 133300, mfs: 66650 }, phaseoutStart: { single: 609350, joint: 1218700, mfs: 609350 }, bracket: 232600 },
-  2025: { exemption: { single: 88100, joint: 137000, mfs: 68500 }, phaseoutStart: { single: 626350, joint: 1252700, mfs: 626350 }, bracket: 239100 },
+export const AMT: Record<number, { exemption: { single: number; joint: number; mfs: number }; phaseoutStart: { single: number; joint: number; mfs: number }; phaseoutRate: number; bracket: number }> = {
+  2023: { exemption: { single: 81300, joint: 126500, mfs: 63250 }, phaseoutStart: { single: 578150, joint: 1156300, mfs: 578150 }, phaseoutRate: 0.25, bracket: 220700 },
+  2024: { exemption: { single: 85700, joint: 133300, mfs: 66650 }, phaseoutStart: { single: 609350, joint: 1218700, mfs: 609350 }, phaseoutRate: 0.25, bracket: 232600 },
+  2025: { exemption: { single: 88100, joint: 137000, mfs: 68500 }, phaseoutStart: { single: 626350, joint: 1252700, mfs: 626350 }, phaseoutRate: 0.25, bracket: 239100 },
+  2026: { exemption: { single: 90100, joint: 140200, mfs: 70100 }, phaseoutStart: { single: 500000, joint: 1000000, mfs: 500000 }, phaseoutRate: 0.5, bracket: 244500 },
 };
 
 /**
@@ -217,24 +271,28 @@ export const AMT: Record<number, { exemption: { single: number; joint: number; m
  * covered but whose spouse is, and MFS living together. Each range is $10,000 wide except the
  * covered joint filer's ($20,000).
  */
-export const IRA_CONTRIBUTION_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000 };
-export const IRA_CATCH_UP = 1000;
+export const IRA_CONTRIBUTION_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000, 2026: 7500 };
+/** Age-50 IRA catch-up (§ 219(b)(5)(B)): $1,000 through 2025, indexed from 2026 ($1,100). */
+export const IRA_CATCH_UP: Record<number, number> = { 2023: 1000, 2024: 1000, 2025: 1000, 2026: 1100 };
 export const IRA_PHASEOUT_END: Record<number, { single: number; joint: number; spouseCovered: number; mfsTogether: number }> = {
   2023: { single: 83000, joint: 136000, spouseCovered: 228000, mfsTogether: 10000 },
   2024: { single: 87000, joint: 143000, spouseCovered: 240000, mfsTogether: 10000 },
   2025: { single: 89000, joint: 146000, spouseCovered: 246000, mfsTogether: 10000 },
+  2026: { single: 91000, joint: 149000, spouseCovered: 252000, mfsTogether: 10000 },
 };
 
 /**
  * Premium tax credit (Form 8962), from each year's Form 8962 instructions. The poverty line
  * is the prior year's (Tables 1-1 to 1-3): first person + each additional person; the tables
  * are linear. Repayment limitation (Table 5): by line 5 percentage, single vs other filers;
- * none at 400% or more.
+ * none at 400% or more. From 2026 there's no repayment limitation at all (§ 36B(f)(2)(B)
+ * struck by the OBBBA), so 2026 has no Table 5 entry.
  */
 export const PTC_POVERTY_LINE: Record<number, Record<"contiguous" | "alaska" | "hawaii", [number, number]>> = {
   2023: { contiguous: [13590, 4720], alaska: [16990, 5900], hawaii: [15630, 5430] },
   2024: { contiguous: [14580, 5140], alaska: [18210, 6430], hawaii: [16770, 5910] },
   2025: { contiguous: [15060, 5380], alaska: [18810, 6730], hawaii: [17310, 6190] },
+  2026: { contiguous: [15650, 5500], alaska: [19550, 6880], hawaii: [17990, 6330] },
 };
 /** [under 200%, 200–300%, 300–400%] × [single, other filing status]. */
 export const PTC_REPAYMENT_LIMIT: Record<number, Array<[number, number]>> = {
@@ -246,9 +304,10 @@ export const PTC_REPAYMENT_LIMIT: Record<number, Array<[number, number]>> = {
 /**
  * Alaska Permanent Fund dividend per eligible resident (Schedule 1 line 8g), including any
  * energy relief payment made with it: 2023 $1,312; 2024 $1,702 ($1,403.83 + $298.17 energy
- * relief); 2025 $1,000 (Alaska Department of Revenue announcements).
+ * relief); 2025 $1,000; 2026 $1,200 ($1,000 + $200 energy relief) (Alaska Department of
+ * Revenue announcements).
  */
-export const ALASKA_PFD: Record<number, number> = { 2023: 1312, 2024: 1702, 2025: 1000 };
+export const ALASKA_PFD: Record<number, number> = { 2023: 1312, 2024: 1702, 2025: 1000, 2026: 1200 };
 
 /**
  * 2025 Schedule 1-A Part V, enhanced deduction for seniors (OBBBA § 70103):
@@ -258,16 +317,34 @@ export const ALASKA_PFD: Record<number, number> = { 2023: 1312, 2024: 1702, 2025
  */
 export const SENIOR_DEDUCTION = { amount: 6000, phaseoutRate: 0.06, threshold: { joint: 150000, other: 75000 }, firstYear: 2025, lastYear: 2028 };
 
-export const EDUCATOR_EXPENSE_LIMIT = 300;
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
-/** § 199A(b)(3)(B) phase-in range above the threshold, 2018–2025 (OBBBA widens it from 2026). */
-export const QBI_PHASE_IN_RANGE = { joint: 100000, other: 50000 };
+/** § 199A(i) (OBBBA, from 2026): a $400 minimum deduction with at least $1,000 of active QBI. */
+export const QBI_MINIMUM = { deduction: 400, activeQbi: 1000, firstYear: 2026 };
+/**
+ * OBBBA rules that start in 2026 (taxable years beginning after December 31, 2025):
+ * - § 170(p): cash gifts to § 170(b)(1)(A) organizations by non-itemizers, up to $1,000 ($2,000 joint);
+ * - § 170(b)(1)(I): itemized charitable gifts allowed only above 0.5% of the contribution base (AGI);
+ * - § 165(d): wagering losses limited to 90% of the losses, and to the gains;
+ * - § 68: itemized deductions reduced by 2/37 of the lesser of them or taxable income (plus them)
+ *   over the start of the 37% bracket.
+ */
+export const OBBBA_2026 = { firstYear: 2026, nonItemizerCharity: { joint: 2000, other: 1000 }, charityFloorRate: 0.005, wageringLossRate: 0.9, itemizedLimitRate: 2 / 37 };
 /** § 199A deduction rate. */
 export const QBI_RATE = 0.20;
 /** Simplified home-office method (Rev. Proc. 2013-13): $5 per square foot, up to 300 square feet. */
 export const SIMPLIFIED_HOME_OFFICE = { ratePerSqFt: 5, maxSqFt: 300 };
 
 export const SUPPORTED_TAX_YEARS = Object.keys(YEARS).map(Number);
+/**
+ * Years whose PDFs are installed and mapped (forms_<year>/, src/fieldmaps/). 2026 is computed by
+ * the engine but its final forms aren't published yet, so filling a 2026 PDF is refused.
+ */
+export const FORM_TAX_YEARS = [2023, 2024, 2025];
+export function assertFormYear(taxYear: number): void {
+  if (!FORM_TAX_YEARS.includes(taxYear)) {
+    throw new Error(`No ${taxYear} forms are mapped yet (forms: ${FORM_TAX_YEARS.join(", ")}). ${SUPPORTED_TAX_YEARS.includes(taxYear) ? `computeReturn supports ${taxYear}; the PDFs come once IRS publishes the final ${taxYear} forms.` : ""}`.trim());
+  }
+}
 
 export function yearConstants(taxYear: number): YearConstants {
   const c = YEARS[taxYear];
