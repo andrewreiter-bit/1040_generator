@@ -35,11 +35,11 @@ import { documentsFor, neededSchedules, scheduleGaps } from "../src/tax/document
 import { EXPENSE_LINES } from "../src/tax/business";
 import { eicChildren, includedW2s, isQualifyingChild, qualifiesForChildTaxCredit } from "../src/tax/household";
 import { zipMatchesState } from "../src/faker/zip";
-import { AMT, assertFormYear, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
+import { ADOPTION, AMT, assertFormYear, HSA_CATCH_UP, HSA_LIMIT, IRA_CATCH_UP, IRA_CONTRIBUTION_LIMIT, IRA_PHASEOUT_END, PTC_POVERTY_LINE, PTC_REPAYMENT_LIMIT, saversCreditRate } from "../src/config/tax-year";
 
 const COMMON_FORMS = [
   "f1040", "f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sb", "f1040sc", "f1040sd", "f1040se", "f1040sse", "f8995",
-  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "fw2g", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
+  "f8959", "f8960", "f8949", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "f8839", "fw2g", "f8995a", "f8995aa", "f8995ac", "f1040s8", "f1040sei",
   "fw2", "f1099int", "f1099div", "f1099b", "f1099r", "f1098t", "f1095a", "f3921", "f1099sa", "fw4",
 ];
 const DEFAULT_PROFILES = ["jordan_single", "rivera_mfj", "retired_single"];
@@ -501,6 +501,28 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   }
   const s1a = keyed(docs.f1040s1a?.[0], "f1040s1a");
   if (docs.f1040s1a?.length) tie(2, "sch1A-38-equals-1040-13b", n0(s1a("line38")), n0(line("line13b")), "Schedule 1-A line 38 vs 1040 line 13b");
+  // ── Form 8839 (adoption credit, 2025 on), from the household's adoptions ──
+  if (docs.f8839?.length) {
+    const k39 = keyed(docs.f8839[0], "f8839");
+    const sch3 = keyed(docs.f1040s3?.[0], "f1040s3");
+    const lim = ADOPTION[t.taxYear];
+    const magi = n0(line("line11"));
+    const frac = magi > lim.phaseoutStart ? Math.min(1, Math.round(((magi - lim.phaseoutStart) / lim.phaseoutRange) * 1000) / 1000) : 0;
+    const bad: string[] = [];
+    (t.adoptions ?? []).slice(0, 3).forEach((a, i) => {
+      const l4 = lim.max - (a.priorYearCredit ?? 0);
+      const l5 = a.finalYear === t.taxYear && a.specialNeeds ? l4 : round2(a.expensesPaidPriorYear + a.expensesPaidThisYear);
+      const l6 = Math.min(l4, l5), l11a = Math.max(0, round2(l6 - round2(l6 * frac))), l11b = Math.min(l11a, lim.refundable);
+      if (!near(n0(k39(`line5.child${i + 1}`)), l5)) bad.push(`5 child ${i + 1}`);
+      if (!near(n0(k39(`line11a.child${i + 1}`)), l11a)) bad.push(`11a child ${i + 1}`);
+      if (!near(n0(k39(`line11b.child${i + 1}`)), l11b)) bad.push(`11b child ${i + 1}`);
+    });
+    checks.push({ phase: 2, id: "8839-lines-from-household", ok: !bad.length, detail: bad.join("; ") || `${t.adoptions?.length ?? 0} adoption(s)` });
+    tie(2, "8839-13-equals-1040-30", n0(k39("line13")), n0(line("line30")), "Form 8839 line 13 vs Form 1040 line 30");
+    tie(2, "8839-18-equals-sch3-6c", n0(k39("line18")), n0(sch3("line6c")), "Form 8839 line 18 vs Schedule 3 line 6c");
+    const room = Math.max(0, round2(n0(line("line18")) - n0(line("line19")) - n0(sch3("line2")) - n0(sch3("line3")) - n0(sch3("line4")) - n0(sch3("line6d"))));
+    checks.push({ phase: 2, id: "8839-18-within-credit-limit", ok: n0(k39("line18")) <= room + 0.01 && n0(k39("line18")) <= n0(k39("line16")) + 0.01, detail: `line 18 ${k39("line18")}, room ${room}` });
+  }
   // ── Schedule 1-A Parts II–IV from the filled W-2s and the household's loans (2025 on) ──
   if (t.taxYear >= 2025) {
     const w2k = (docs.fw2 ?? []).map((run, i) => ({ k: keyed(run, "fw2"), w: includedW2s(t)[i] }));
@@ -1066,7 +1088,7 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   const included = (id: string) => (docs[id]?.length ?? 0) > 0;
   const needed = neededSchedules(t);
   const needs: Array<[string, boolean]> = [
-    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "f1040s8", "f1040sei"]
+    ...["f1040s1", "f1040s1a", "f1040s2", "f1040s3", "f1040sa", "f1040sc", "f1040sd", "f1040se", "f8949", "f1040sse", "f8995", "f8995a", "f8995aa", "f8995ac", "f8959", "f8960", "f8582", "f2441", "f8863", "f8880", "f8962", "f6251", "f8889", "f4952", "f1040sr", "f8606", "f4684", "f8283", "f8839", "f1040s8", "f1040sei"]
       .filter((id) => !gaps.includes(id))
       .map((id): [string, boolean] => [id, needed.includes(id)]),
   ];

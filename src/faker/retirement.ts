@@ -103,6 +103,8 @@ export function buildRetirement1099Rs(faker: Faker, t: FakeTaxpayer): Retirement
 
 /** § 402(g) elective deferral limit and the age-50 catch-up (IRS cost-of-living notices). */
 const DEFERRAL_LIMIT: Record<number, number> = { 2023: 22500, 2024: 23000, 2025: 23500, 2026: 24500 };
+/** 2026 on: catch-ups by those with prior-year FICA wages over $150,000 must be Roth (Notice 2025-67). */
+const ROTH_CATCH_UP = { firstYear: 2026, wageThreshold: 150000 };
 const DEFERRAL_CATCH_UP: Record<number, number> = { 2023: 7500, 2024: 7500, 2025: 7500, 2026: 8000 };
 /** IRA contribution limit and the age-50 catch-up. */
 const IRA_LIMIT: Record<number, number> = { 2023: 6500, 2024: 7000, 2025: 7000, 2026: 7500 };
@@ -119,6 +121,11 @@ const ROTH_INCOME_CEILING = { joint: 190000, other: 120000 };
  * whose drawn income is well under the Roth phase-out, and never on a separate return by
  * someone who lived with their spouse (their phase-out range is $0–$10,000; Pub 590-A).
  * Both feed Form 8880.
+ *
+ * 2026 on (§ 414(v)(7), OBBBA-era SECURE 2.0 rule; Notice 2025-67): a participant whose prior-year
+ * FICA wages from the employer were over $150,000 must make catch-up contributions as Roth. The
+ * prior year isn't modelled, so this W-2's box 5 stands in for it. The part of the deferral above the
+ * base limit becomes box 12 code AA (designated Roth) and is included in boxes 1 and 16. No new draw.
  */
 export function addRetirementSavings(faker: Faker, t: FakeTaxpayer, ssWageBase: number): void {
   const birthYear = (dob: string | null) => (dob ? Number(dob.split("/")[2]) : t.taxYear);
@@ -127,14 +134,29 @@ export function addRetirementSavings(faker: Faker, t: FakeTaxpayer, ssWageBase: 
     primary: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("primary") >= 50 ? DEFERRAL_CATCH_UP[t.taxYear] : 0),
     spouse: (DEFERRAL_LIMIT[t.taxYear] ?? 23500) + (age("spouse") >= 50 ? DEFERRAL_CATCH_UP[t.taxYear] : 0),
   };
+  const base = DEFERRAL_LIMIT[t.taxYear] ?? 23500;
+  const used: Record<"primary" | "spouse", number> = { primary: 0, spouse: 0 };
   for (const w of t.w2Records) {
     if (!faker.datatype.boolean({ probability: 0.4 })) continue;
     const who = w.employee ?? "primary";
-    const drawn = round2(w.wages * faker.number.float({ min: 0.02, max: 0.12, fractionDigits: 3 }));
+    let drawn = round2(w.wages * faker.number.float({ min: 0.02, max: 0.12, fractionDigits: 3 }));
+    // 2026: a high earner aged 50+ maxes out (no extra draw), so the Roth catch-up rule applies.
+    if (t.taxYear >= ROTH_CATCH_UP.firstYear && age(who) >= 50 && w.medicareWages > ROTH_CATCH_UP.wageThreshold) drawn = Math.max(drawn, remaining[who]);
     const deferral = Math.min(remaining[who], drawn);
     if (deferral <= 0) continue;
     remaining[who] = round2(remaining[who] - deferral);
-    w.box12 = [...(w.box12 ?? []), { code: "D", amount: deferral }];
+    // The part above the base limit is the catch-up; from 2026 a high earner's must be Roth.
+    const catchUp = Math.max(0, round2(used[who] + deferral - base) - Math.max(0, round2(used[who] - base)));
+    used[who] = round2(used[who] + deferral);
+    const roth = t.taxYear >= ROTH_CATCH_UP.firstYear && catchUp > 0 && w.medicareWages > ROTH_CATCH_UP.wageThreshold ? catchUp : 0;
+    if (roth > 0) {
+      w.box12 = [...(w.box12 ?? []), { code: "D", amount: round2(deferral - roth) }, { code: "AA", amount: roth }];
+      w.wages = round2(w.wages + roth);
+      w.stateWages = round2(w.stateWages + roth);
+      t.totalWages = round2(t.totalWages + roth);
+    } else {
+      w.box12 = [...(w.box12 ?? []), { code: "D", amount: deferral }];
+    }
     w.socialSecurityWages = Math.min(ssWageBase, round2(w.socialSecurityWages + deferral));
     w.medicareWages = round2(w.medicareWages + deferral);
     w.ssWithheld = round2(w.socialSecurityWages * 0.062);

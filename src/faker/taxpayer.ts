@@ -638,6 +638,14 @@ export interface FakeTaxpayer {
   /** Cash gifts to § 170(b)(1)(A) charities (not donor-advised funds or § 509(a)(3) organizations) by a filer who
    *  doesn't itemize: 2026 Form 1040 line 12f, up to $1,000 ($2,000 joint). Itemizers' cash gifts are in `itemized`. */
   charitableCashGifts?: number;
+  /**
+   * Adoptions (Form 8839 Part II, 2025 on). Each child is a dependent (`dependentIndex`), adopted in the
+   * U.S. (foreign adoptions aren't modelled). `expensesPaidPriorYear` and `expensesPaidThisYear` are
+   * qualified adoption expenses; `priorYearCredit` is line 3 (expenses used for a credit before).
+   */
+  adoptions?: Array<{ dependentIndex: number; specialNeeds: boolean; finalYear: number; expensesPaidPriorYear: number; expensesPaidThisYear: number; priorYearCredit?: number }>;
+  /** Nonrefundable adoption credit carried forward from prior years (Form 8839 line 15). */
+  adoptionCreditCarryforward?: number;
   /** Vehicle loans with interest paid this year (Schedule 1-A Part IV, 2025–2028). */
   vehicleLoans?: VehicleLoan[];
   /** MFS only: didn't have the same principal home as the spouse during the last 6 months of the year (§ 32(d)(2)(B)(ii)(I)). */

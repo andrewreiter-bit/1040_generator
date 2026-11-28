@@ -65,6 +65,7 @@ export function neededSchedules(t: FakeTaxpayer): string[] {
   // Schedule R only with a credit: the instructions stop at line 19 when it's zero or less.
   if ((r.scheduleR?.line22 ?? 0) > 0) out.push("f1040sr");
   if (r.retirement.form8606.primary || r.retirement.form8606.spouse) out.push("f8606");
+  if (r.form8839 && (r.form8839.line13 > 0 || r.form8839.line18 > 0)) out.push("f8839");
   if (t.itemized?.casualtyEvents?.length) out.push("f4684");
   if (r.itemizes && t.itemized?.noncashGifts?.length) out.push("f8283");
   // Form 6251 is attached when line 7 is more than line 10 (i.e. AMT is owed; no AMT foreign tax credit).
@@ -113,6 +114,7 @@ export function documentsFor(formId: string, t: FakeTaxpayer): DocumentSpec[] {
     case "f6251":   return single(formId, t, "Form 6251");
     case "f4952":   return single(formId, t, "Form 4952");
     case "f1040sr": return single(formId, t, "Schedule R");
+    case "f8839": return single(formId, t, "Form 8839");
     case "f8606": {
       if (!neededSchedules(t).includes("f8606") || !getFieldMap("f8606", t.taxYear)) return [];
       const f = computeReturn(t).retirement.form8606;

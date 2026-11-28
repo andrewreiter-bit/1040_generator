@@ -110,6 +110,7 @@ const TEXT_VALUES: Record<string, FieldValue> = {
   line27:           (t) => moneyOrBlank(r(t).earnedIncomeCredit),
   line28:           (t) => moneyOrBlank(r(t).additionalChildTaxCredit),
   line29:           (t) => moneyOrBlank(r(t).americanOpportunityCredit),
+  line30:           (t) => moneyOrBlank(r(t).refundableAdoptionCredit),
   line35a:          (t) => moneyOrBlank(r(t).refund),
   line37:           (t) => moneyOrBlank(r(t).amountOwed),
   // Direct deposit only when there is a refund to deposit.
@@ -441,6 +442,7 @@ const LAYOUT_2025: Layout1040 = {
     line27: `${P2}f2_23[0]`,   // 27a
     line28: `${P2}f2_24[0]`,
     line29: `${P2}f2_25[0]`,
+    line30: `${P2}f2_26[0]`,   // refundable adoption credit (2025 on)
     line31: `${P2}f2_27[0]`,
     line35a: `${P2}f2_31[0]`,
     line37: `${P2}f2_35[0]`,

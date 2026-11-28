@@ -27,6 +27,7 @@ import {
   OBBBA_2026,
 } from "../config/tax-year";
 import { Schedule1APartsIIToIV, schedule1APartsIIToIV } from "./additional-deductions";
+import { form8839, Form8839Lines, limitAdoptionCredit } from "./adoption";
 import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount, separatedSpouse } from "./household";
 import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
 import { QbiRow,
@@ -95,6 +96,7 @@ export interface Schedule3Lines {
   educationCredit: number;      // 3 (Form 8863 line 19)
   saversCredit: number;         // 4 (Form 8880 line 12)
   elderlyCredit: number;        // 6d (Schedule R line 22)
+  adoptionCredit: number;       // 6c (Form 8839 line 18)
   nonrefundableCredits: number; // 8 → 1040 line 20
   excessSocialSecurity: number; // 11
   netPremiumTaxCredit: number;  // 9 (Form 8962 line 26)
@@ -189,6 +191,9 @@ export interface ReturnLines {
   scheduleThreePayments: number; // 31
   /** 29: refundable American opportunity credit (Form 8863 line 8). */
   americanOpportunityCredit: number;
+  /** 2025 on: Form 8839 line 13 → Form 1040 line 30. */
+  refundableAdoptionCredit: number;
+  form8839?: Form8839Lines;
   refundableCredits: number;   // 32 (27 + 28 + 29 + 31)
   totalPayments: number;       // 33
   overpaid: number;            // 34
@@ -563,7 +568,16 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const saversCredit = f8880.line12;
   const ctcTaxLimit = Math.max(0, round2(taxBeforeCredits - dependentCareCredit - educationCredit - saversCredit - elderlyCredit));
   const childAndOtherDependentCredit = Math.min(creditAfterPhaseout, ctcTaxLimit);
-  const scheduleThreeCredits = round2(dependentCareCredit + educationCredit + saversCredit + elderlyCredit);
+  // Form 8839 (2025 on): the refundable part → line 30; the nonrefundable part (Schedule 3 line 6c)
+  // is limited to line 18 less line 19 and the other Schedule 3 credits (§ 23(c): after the CTC).
+  let f8839 = form8839(t, agi, R);
+  if (f8839) {
+    f8839 = limitAdoptionCredit(f8839, round2(ctcTaxLimit - childAndOtherDependentCredit), R);
+    unsupported.push(...f8839.unsupported);
+  }
+  const adoptionCredit = f8839?.line18 ?? 0;
+  const refundableAdoptionCredit = f8839?.line13 ?? 0;
+  const scheduleThreeCredits = round2(dependentCareCredit + educationCredit + saversCredit + elderlyCredit + adoptionCredit);
   const totalCredits = round2(childAndOtherDependentCredit + scheduleThreeCredits);
   const taxAfterCredits = Math.max(0, round2(taxBeforeCredits - totalCredits));
 
@@ -600,7 +614,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   const estimatedPayments = round2(t.estimatedTaxPayments ?? 0);
   const excessSs = excessSocialSecurity(t, w2s, R).total;
   const schedule3: Schedule3Lines = {
-    dependentCareCredit, educationCredit, saversCredit, elderlyCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs,
+    dependentCareCredit, educationCredit, saversCredit, elderlyCredit, adoptionCredit, nonrefundableCredits: scheduleThreeCredits, excessSocialSecurity: excessSs,
     netPremiumTaxCredit: f8962?.line26 ?? 0, otherPayments: round2(excessSs + (f8962?.line26 ?? 0)),
     required: excessSs > 0 || scheduleThreeCredits > 0 || (f8962?.line26 ?? 0) > 0,
   };
@@ -636,7 +650,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     taxLimit: ctcTaxLimit, credit: childAndOtherDependentCredit, partII,
     required: maxCredit > 0,
   };
-  const refundableCredits = round2(eic.credit + partII.credit + americanOpportunityCredit + scheduleThreePayments);
+  const refundableCredits = round2(eic.credit + partII.credit + americanOpportunityCredit + refundableAdoptionCredit + scheduleThreePayments);
   const totalPayments = round2(totalWithholding + estimatedPayments + refundableCredits);
 
   const overpaid = Math.max(0, round2(totalPayments - totalTax));
@@ -654,7 +668,7 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
     tax, scheduleTwoPartOne, form6251: f6251, alternativeMinimumTax, excessAdvancePtc, form8962: f8962 && (f8962.line24 > 0 || f8962.line25 > 0) ? f8962 : undefined, taxBeforeCredits, childAndOtherDependentCredit,
     scheduleThreeCredits, form2441: f2441?.required ? f2441 : undefined, form8880: f8880.required ? f8880 : undefined, totalCredits, taxAfterCredits, otherTaxes, totalTax,
     w2Withholding, form1099Withholding, otherWithholding, totalWithholding, estimatedPayments,
-    earnedIncomeCredit: eic.credit, separatedSpouse: sepSpouse, eicSeparatedSpouse: t.filingStatus === "MFS" && eic.credit > 0, additionalChildTaxCredit: partII.credit, americanOpportunityCredit,
+    earnedIncomeCredit: eic.credit, separatedSpouse: sepSpouse, eicSeparatedSpouse: t.filingStatus === "MFS" && eic.credit > 0, additionalChildTaxCredit: partII.credit, americanOpportunityCredit, refundableAdoptionCredit, form8839: f8839,
     form8863: f8863?.required ? f8863 : undefined,
     scheduleThreePayments, refundableCredits, totalPayments, overpaid, refund: overpaid, amountOwed,
     scheduleC: scheduleCs, scheduleSE: scheduleSEs, businessDeductions: bizDed,

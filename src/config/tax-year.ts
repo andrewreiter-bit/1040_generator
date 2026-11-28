@@ -318,6 +318,15 @@ export const ALASKA_PFD: Record<number, number> = { 2023: 1312, 2024: 1702, 2025
 export const SENIOR_DEDUCTION = { amount: 6000, phaseoutRate: 0.06, threshold: { joint: 150000, other: 75000 }, firstYear: 2025, lastYear: 2028 };
 
 export const STUDENT_LOAN_INTEREST = { max: 2500, phaseoutRange: { joint: 30000, other: 15000 } };
+/**
+ * Adoption credit (§ 23; Form 8839 Part II): the maximum per child, where the MAGI phase-out starts
+ * (it runs $40,000), and the refundable part per child (§ 23(a)(4), OBBBA, from 2025). 2025: 2025
+ * Form 8839 and instructions; 2026: Rev. Proc. 2025-32 § 4.04.
+ */
+export const ADOPTION: Record<number, { max: number; phaseoutStart: number; phaseoutRange: number; refundable: number }> = {
+  2025: { max: 17280, phaseoutStart: 259190, phaseoutRange: 40000, refundable: 5000 },
+  2026: { max: 17670, phaseoutStart: 265080, phaseoutRange: 40000, refundable: 5120 },
+};
 /** § 199A(i) (OBBBA, from 2026): a $400 minimum deduction with at least $1,000 of active QBI. */
 export const QBI_MINIMUM = { deduction: 400, activeQbi: 1000, firstYear: 2026 };
 /**
