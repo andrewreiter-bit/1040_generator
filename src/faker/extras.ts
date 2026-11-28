@@ -266,7 +266,7 @@ function fakeVin(faker: Faker, us: boolean): string {
  * change); otherwise ~12% of W-2s paying up to $120,000 carry an FLSA overtime premium of 1.5–6% of
  * wages (already in box 1; printed in box 14). Per household: ~8% took out a loan for a vehicle this
  * year ($22,000–$65,000 at 4–9%, interest from the loan month); 85% are new and 65% U.S.-assembled,
- * so some loans don't qualify.
+ * so some loans don't qualify. Adoptions (Form 8839) are drawn here too, after the loan.
  */
 function addWorkingFamilyDeductions(faker: Faker, t: FakeTaxpayer): void {
   const y = t.taxYear;
@@ -292,6 +292,18 @@ function addWorkingFamilyDeductions(faker: Faker, t: FakeTaxpayer): void {
   const newVehicle = faker.datatype.boolean({ probability: 0.85 });
   const us = faker.datatype.boolean({ probability: 0.65 });
   const vin = fakeVin(faker, us);
+  // Adoption (Form 8839, 2025 on): ~1.5% of households with a child adopted their youngest child, final
+  // this year; 25% special needs; $3,000–$30,000 of expenses this year and, for 40%, $1,000–$8,000 last year.
+  const adoptGo = faker.datatype.boolean({ probability: 0.015 });
+  const special = faker.datatype.boolean({ probability: 0.25 });
+  const expensesNow = dollars(faker, 3000, 30000);
+  const priorGo = faker.datatype.boolean({ probability: 0.4 });
+  const expensesPrior = dollars(faker, 1000, 8000);
+  const kids = t.dependents.map((d, i) => ({ d, i })).filter(({ d }) => d.relationship === "Child" && d.birthYear <= y && y - d.birthYear <= 12);
+  if (adoptGo && kids.length) {
+    const youngest = kids.reduce((a, b) => (b.d.birthYear > a.d.birthYear ? b : a));
+    t.adoptions = [{ dependentIndex: youngest.i, specialNeeds: special, finalYear: y, expensesPaidThisYear: expensesNow, expensesPaidPriorYear: priorGo ? expensesPrior : 0 }];
+  }
   if (loanGo) {
     const monthsPaid = 12 - month + 0.5;
     t.vehicleLoans = [{

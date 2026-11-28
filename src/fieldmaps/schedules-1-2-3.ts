@@ -145,9 +145,10 @@ function schedule3(taxYear: number): FieldMap {
   add(F(L.line2), "line2", (x) => moneyOrBlank(x.schedule3.dependentCareCredit));
   add(F(L.line3), "line3", (x) => moneyOrBlank(x.schedule3.educationCredit));
   add(F(L.line4), "line4", (x) => moneyOrBlank(x.schedule3.saversCredit));
-  // 6d: Schedule R; line 7 totals lines 6a–6z (only 6d is modelled).
+  // 6c: adoption credit (Form 8839 line 18, 2025 on); 6d: Schedule R; line 7 totals lines 6a–6z (6c and 6d are modelled).
+  if (taxYear >= 2025) add(F("P1.f1_11"), "line6c", (x) => moneyOrBlank(x.schedule3.adoptionCredit));
   add(F("P1.f1_12"), "line6d", (x) => moneyOrBlank(x.schedule3.elderlyCredit));
-  add(F(L.line7), "line7", (x) => moneyOrBlank(x.schedule3.elderlyCredit));
+  add(F(L.line7), "line7", (x) => moneyOrBlank(x.schedule3.elderlyCredit + x.schedule3.adoptionCredit));
   add(F(L.line8), "line8", (x) => moneyOrBlank(x.scheduleThreeCredits));
   add(F(L.line9), "line9", (x) => moneyOrBlank(x.schedule3.netPremiumTaxCredit));
   add(F(L.line11), "line11", (x) => moneyOrBlank(x.schedule3.excessSocialSecurity));
