@@ -74,6 +74,12 @@ function w2Map(taxYear: number): FieldMap {
       key: `${copy}.box13.retirementPlan`, value: (t) => checkIf(!!t.w2Records[0] && coveredByPlan(t.w2Records[0])),
     };
     fields[`${col}c${p}_4[0]`] = { key: `${copy}.box13.thirdPartySickPay`, value: () => OFF };
+    // Box 7 Social Security tips; box 14 "Other": the FLSA overtime premium (2025 Schedule 1-A instructions).
+    fields[`${col}Box7_ReadOrder[0].f${p}_15[0]`] = { key: `${copy}.box7`, value: (t) => (t.w2Records[0]?.socialSecurityTips ? money(t.w2Records[0].socialSecurityTips) : BLANK) };
+    fields[`${col}f${p}_28[0]`] = {
+      key: `${copy}.box14`, text: true,
+      value: (t) => (t.w2Records[0]?.qualifiedOvertime ? `FLSA OT PREM ${money(t.w2Records[0].qualifiedOvertime)}` : BLANK),
+    };
   }
   return { formId: "fw2", taxYear, strict: false, fields };
 }

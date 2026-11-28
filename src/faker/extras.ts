@@ -186,6 +186,9 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
     const amount = dollars(faker, 100, 3000);
     if (gives) t.charitableCashGifts = amount;
   }
+  // 2025 on (Schedule 1-A Parts II–IV): tipped jobs, overtime premiums and new-car loans. Drawn only for
+  // 2025+ and after every other draw, so 2023–2024 households don't move.
+  if (y >= 2025) addWorkingFamilyDeductions(faker, t);
 
   // ── Itemizers: reallocations that keep Schedule A line 17 ──
   const it = t.itemized;
@@ -240,3 +243,61 @@ export function addExtras(faker: Faker, t: FakeTaxpayer): void {
     }
   }
 }
+
+const TIPPED_OCCUPATIONS = ["Waiters and Waitresses", "Bartenders", "Hairdressers, Hairstylists, and Cosmetologists", "Baggage Porters and Bellhops", "Food Servers, Nonrestaurant"];
+const VIN_CHARS = "0123456789ABCDEFGHJKLMNPRSTUVWXYZ";   // no I, O or Q
+const VIN_VALUE: Record<string, number> = Object.fromEntries([...VIN_CHARS].map((ch) => [ch, /\d/.test(ch) ? Number(ch) : "ABCDEFGH".includes(ch) ? "ABCDEFGH".indexOf(ch) + 1 : "JKLMN".includes(ch) ? "JKLMN".indexOf(ch) + 1 : ch === "P" ? 7 : ch === "R" ? 9 : "STUVWXYZ".indexOf(ch) + 2]));
+const VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2];
+
+/** A 17-character VIN with a valid check digit; the first character is the country (1, 4, 5: U.S.). */
+function fakeVin(faker: Faker, us: boolean): string {
+  const first = us ? faker.helpers.arrayElement(["1", "4", "5"]) : faker.helpers.arrayElement(["2", "3", "J", "K", "W", "S"]);
+  const chars = [first, ...Array.from({ length: 16 }, () => faker.helpers.arrayElement([...VIN_CHARS]))];
+  chars[8] = "0";
+  const total = chars.reduce((s, ch, i) => s + VIN_VALUE[ch] * VIN_WEIGHTS[i], 0);
+  const check = total % 11;
+  chars[8] = check === 10 ? "X" : String(check);
+  return chars.join("");
+}
+
+/**
+ * Tips, overtime and a new-car loan (2025 on). Per W-2 (fixed draws each): ~5% of W-2s paying up to
+ * $90,000 are tipped jobs (box 7 = 25–60% of box 1, moved out of box 3, so boxes 1, 4 and 5 don't
+ * change); otherwise ~12% of W-2s paying up to $120,000 carry an FLSA overtime premium of 1.5–6% of
+ * wages (already in box 1; printed in box 14). Per household: ~8% took out a loan for a vehicle this
+ * year ($22,000–$65,000 at 4–9%, interest from the loan month); 85% are new and 65% U.S.-assembled,
+ * so some loans don't qualify.
+ */
+function addWorkingFamilyDeductions(faker: Faker, t: FakeTaxpayer): void {
+  const y = t.taxYear;
+  for (const w of t.w2Records) {
+    const tipGo = faker.datatype.boolean({ probability: 0.05 });
+    const tipShare = faker.number.float({ min: 0.25, max: 0.6, fractionDigits: 3 });
+    const occupation = faker.helpers.arrayElement(TIPPED_OCCUPATIONS);
+    const otGo = faker.datatype.boolean({ probability: 0.12 });
+    const otShare = faker.number.float({ min: 0.015, max: 0.06, fractionDigits: 4 });
+    if (tipGo && w.wages > 0 && w.wages <= 90000 && w.socialSecurityWages >= w.wages * tipShare) {
+      const tips = round2(w.wages * tipShare);
+      w.socialSecurityTips = tips;
+      w.socialSecurityWages = round2(w.socialSecurityWages - tips);
+      w.tippedOccupation = occupation;
+    } else if (otGo && w.wages > 0 && w.wages <= 120000) {
+      w.qualifiedOvertime = round2(w.wages * otShare);
+    }
+  }
+  const loanGo = faker.datatype.boolean({ probability: 0.08 });
+  const principal = dollars(faker, 22000, 65000);
+  const apr = faker.number.float({ min: 0.04, max: 0.09, fractionDigits: 4 });
+  const month = faker.number.int({ min: 1, max: 11 }), day = faker.number.int({ min: 1, max: 28 });
+  const newVehicle = faker.datatype.boolean({ probability: 0.85 });
+  const us = faker.datatype.boolean({ probability: 0.65 });
+  const vin = fakeVin(faker, us);
+  if (loanGo) {
+    const monthsPaid = 12 - month + 0.5;
+    t.vehicleLoans = [{
+      vin, originated: `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${y}`,
+      interestPaid: round2(principal * apr * monthsPaid / 12), newVehicle, usAssembly: us, personalUse: true, firstLien: true,
+    }];
+  }
+}
+

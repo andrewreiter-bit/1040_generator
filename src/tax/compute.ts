@@ -26,6 +26,7 @@ import {
   QBI_MINIMUM,
   OBBBA_2026,
 } from "../config/tax-year";
+import { Schedule1APartsIIToIV, schedule1APartsIIToIV } from "./additional-deductions";
 import { childTaxCreditCount, eicChildren, includedW2s, is65OrOlder, otherDependentCount, separatedSpouse } from "./household";
 import { EicLines, Schedule8812PartII, additionalChildTaxCredit, earnedIncomeCredit } from "./credits";
 import { QbiRow,
@@ -146,8 +147,9 @@ export interface ReturnLines {
   qbiDeduction: number;        // 13 / 13a (2026: 13b)
   /** 2026 on: § 199A(i) minimum deduction ($400 with active QBI of $1,000 or more). */
   qbiMinimum?: { activeQbi: number; amount: number };
-  /** 2025 Schedule 1-A (line 38 → Form 1040 line 13b); only Part V (seniors) is modelled. */
-  schedule1A?: { magi: number; line33: number; line34: number; line35: number; line36a: number; line36b: number; line37: number; line38: number };
+  /** Schedule 1-A (line 38 → Form 1040 line 13b for 2025, 13a for 2026): Parts II–V. */
+  /** Schedule 1-A: Parts II–IV (tips, overtime, car loan interest) and Part V (seniors); line 38 = 13 + 21 + 30 + 37. */
+  schedule1A?: Schedule1APartsIIToIV & { seniorApplies: boolean; magi: number; line33: number; line34: number; line35: number; line36a: number; line36b: number; line37: number; line38: number };
   additionalDeductions: number; // 13b
   totalDeductions: number;     // 14
   taxableIncome: number;       // 15
@@ -434,15 +436,21 @@ export function computeReturn(t: FakeTaxpayer): ReturnLines {
   // 2025 Schedule 1-A Part V: enhanced deduction for seniors (married couples must file jointly).
   let schedule1A: ReturnLines["schedule1A"];
   const sd = SENIOR_DEDUCTION;
-  if (t.taxYear >= sd.firstYear && t.taxYear <= sd.lastYear && t.filingStatus !== "MFS" && (youAre65 || spouseIs65)) {
-    const magi = agi;   // + foreign / Puerto Rico exclusions: none modelled
-    const line33 = Math.max(0, round2(magi - (t.filingStatus === "MFJ" ? sd.threshold.joint : sd.threshold.other)));
-    const line34 = round2(line33 * sd.phaseoutRate);
-    const line35 = Math.max(0, round2(sd.amount - line34));
-    const line36a = youAre65 && t.ssn ? line35 : 0;
-    const line36b = spouseIs65 && t.spouseSSN ? line35 : 0;
-    const line37 = round2(line36a + line36b);
-    schedule1A = { magi, line33, line34, line35, line36a, line36b, line37, line38: line37 };
+  const magi = agi;   // Schedule 1-A line 3: + foreign / Puerto Rico exclusions: none modelled
+  const partsIIToIV = schedule1APartsIIToIV(t, magi, R);
+  const seniorApplies = t.taxYear >= sd.firstYear && t.taxYear <= sd.lastYear && t.filingStatus !== "MFS" && (youAre65 || spouseIs65);
+  if (seniorApplies || partsIIToIV.tips || partsIIToIV.overtime || partsIIToIV.carLoan) {
+    let line33 = 0, line34 = 0, line35 = 0, line36a = 0, line36b = 0, line37 = 0;
+    if (seniorApplies) {
+      line33 = Math.max(0, round2(magi - (t.filingStatus === "MFJ" ? sd.threshold.joint : sd.threshold.other)));
+      line34 = round2(line33 * sd.phaseoutRate);
+      line35 = Math.max(0, round2(sd.amount - line34));
+      line36a = youAre65 && t.ssn ? line35 : 0;
+      line36b = spouseIs65 && t.spouseSSN ? line35 : 0;
+      line37 = round2(line36a + line36b);
+    }
+    const line38 = round2((partsIIToIV.tips?.line13 ?? 0) + (partsIIToIV.overtime?.line21 ?? 0) + (partsIIToIV.carLoan?.line30 ?? 0) + line37);
+    schedule1A = { ...partsIIToIV, seniorApplies, magi, line33, line34, line35, line36a, line36b, line37, line38 };
   }
   const additionalDeductions = schedule1A?.line38 ?? 0;
   let qbi: Form8995Lines | undefined;

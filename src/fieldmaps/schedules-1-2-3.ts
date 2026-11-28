@@ -271,9 +271,11 @@ function form8960(taxYear: number): FieldMap {
 }
 
 /**
- * 2025 Schedule 1-A (Additional Deductions): Part I (modified AGI), Part V
- * (enhanced deduction for seniors) and Part VI (total → Form 1040 line 13b).
- * Parts II–IV (tips, overtime, car loan interest) are not modelled and stay blank.
+ * 2025 Schedule 1-A (Additional Deductions): Part I (modified AGI), Part II (tips: lines 4a–13),
+ * Part III (overtime: 14a–21), Part IV (car loan interest: two VIN rows on line 22, then 23–30),
+ * Part V (enhanced deduction for seniors) and Part VI (line 38 → Form 1040 line 13b). Each part is
+ * filled only when it applies; on lines 10, 18 and 27 a result of zero leaves the next two lines blank.
+ * More than two VINs would need an attached statement (not produced).
  */
 function schedule1A_2025(): FieldMap {
   const F = fieldIn("form1[0]");
@@ -285,19 +287,56 @@ function schedule1A_2025(): FieldMap {
   add(F("P1.f1_03"), "line1", amt((s) => s.magi));
   for (const n of [4, 5, 6, 7, 8]) add(F(`P1.f1_0${n}`), `line2.f1_0${n}`, () => BLANK);   // 2a–2e: no exclusions
   add(F("P1.f1_09"), "line3", amt((s) => s.magi));
-  for (let n = 10; n <= 31; n++) add(F(`P1.f1_${n}`), `partII-III.f1_${n}`, () => BLANK, true);
-  const p4 = ["Table_Line22[0].Line22a[0].VIN-1_Comb[0].f2_01", "Table_Line22[0].Line22a[0].f2_02", "Table_Line22[0].Line22a[0].f2_03",
-    "Table_Line22[0].Line22b[0].VIN-2_Comb[0].f2_04", "Table_Line22[0].Line22b[0].f2_05", "Table_Line22[0].Line22b[0].f2_06"];
-  p4.forEach((f, i) => add(F(`P2.${f}`), `partIV.line22.${i}`, () => BLANK, true));
-  for (let n = 7; n <= 14; n++) add(F(`P2.f2_${String(n).padStart(2, "0")}`), `partIV.f2_${n}`, () => BLANK, true);
-  add(F("P2.f2_15"), "line31", amt((s) => s.magi));
-  add(F("P2.f2_16"), "line32", (x, t) => (a(x) ? money(t.filingStatus === "MFJ" ? 150000 : 75000) : BLANK));
-  add(F("P2.f2_17"), "line33", amt((s) => s.line33));
-  add(F("P2.f2_18"), "line34", (x) => (a(x)?.line33 ? money(a(x)!.line34) : BLANK));
-  add(F("P2.f2_19"), "line35", amt((s) => s.line35));
-  add(F("P2.f2_20"), "line36a", (x) => moneyOrBlank(a(x)?.line36a));
-  add(F("P2.f2_21"), "line36b", (x) => moneyOrBlank(a(x)?.line36b));
-  add(F("P2.f2_22"), "line37", amt((s) => s.line37));
+  // Part II, tips (lines 4a–13) and Part III, overtime (14a–21): one field per line, in form order.
+  const tips = (x: ReturnLines) => a(x)?.tips;
+  const ot = (x: ReturnLines) => a(x)?.overtime;
+  const tipLines: Array<[string, (v: NonNullable<ReturnType<typeof tips>>) => number | undefined]> = [
+    ["line4a", (v) => (v.employers === 1 ? v.line4a : undefined)], ["line4b", () => undefined], ["line4c", (v) => v.line4c], ["line5", () => undefined],
+    ["line6", (v) => v.line6], ["line7", (v) => v.line7], ["line8", (v) => v.line8], ["line9", (v) => v.line9], ["line10", (v) => v.line10],
+    ["line11", (v) => (v.line10 > 0 ? v.line11 : undefined)], ["line12", (v) => (v.line10 > 0 ? v.line12 : undefined)], ["line13", (v) => v.line13],
+  ];
+  tipLines.forEach(([key, pick], i) => add(F(`P1.f1_${10 + i}`), key, (x) => {
+    const v = tips(x); const n = v ? pick(v) : undefined;
+    return n === undefined ? BLANK : key === "line11" ? String(n) : money(n);
+  }, key === "line11"));
+  const otLines: Array<[string, (v: NonNullable<ReturnType<typeof ot>>) => number | undefined]> = [
+    ["line14a", (v) => v.line14a], ["line14b", () => undefined], ["line14c", (v) => v.line14c], ["line15", (v) => v.line15], ["line16", (v) => v.line16],
+    ["line17", (v) => v.line17], ["line18", (v) => v.line18], ["line19", (v) => (v.line18 > 0 ? v.line19 : undefined)],
+    ["line20", (v) => (v.line18 > 0 ? v.line20 : undefined)], ["line21", (v) => v.line21],
+  ];
+  otLines.forEach(([key, pick], i) => add(F(`P1.f1_${22 + i}`), key, (x) => {
+    const v = ot(x); const n = v ? pick(v) : undefined;
+    return n === undefined ? BLANK : key === "line19" ? String(n) : money(n);
+  }, key === "line19"));
+  // Part IV, car loan interest: line 22 rows a and b — (i) VIN, (ii) deducted elsewhere, (iii) Schedule 1-A.
+  const car = (x: ReturnLines) => a(x)?.carLoan;
+  const p4: Array<[string, string, (r: NonNullable<ReturnType<typeof car>>["rows"][number]) => string]> = [];
+  for (const [row, vinField, ii, iii] of [[0, "Line22a[0].VIN-1_Comb[0].f2_01", "Line22a[0].f2_02", "Line22a[0].f2_03"], [1, "Line22b[0].VIN-2_Comb[0].f2_04", "Line22b[0].f2_05", "Line22b[0].f2_06"]] as const) {
+    const ab = row === 0 ? "a" : "b";
+    p4.push([`Table_Line22[0].${vinField}`, `line22${ab}.vin`, (r) => r.vin]);
+    p4.push([`Table_Line22[0].${ii}`, `line22${ab}.deductedElsewhere`, (r) => moneyOrBlank(r.deductedElsewhere)]);
+    p4.push([`Table_Line22[0].${iii}`, `line22${ab}.schedule1A`, (r) => money(r.schedule1A)]);
+    for (const [f, key, pick] of p4.slice(-3)) add(F(`P2.${f}`), key, (x) => { const r = car(x)?.rows[row]; return r ? pick(r) : BLANK; }, key.endsWith(".vin"));
+  }
+  const carLines: Array<[string, (v: NonNullable<ReturnType<typeof car>>) => number | undefined]> = [
+    ["line23", (v) => v.line23], ["line24", (v) => v.line24], ["line25", (v) => v.line25], ["line26", (v) => v.line26], ["line27", (v) => v.line27],
+    ["line28", (v) => (v.line27 > 0 ? v.line28 : undefined)], ["line29", (v) => (v.line27 > 0 ? v.line29 : undefined)], ["line30", (v) => v.line30],
+  ];
+  carLines.forEach(([key, pick], i) => add(F(`P2.f2_${String(7 + i).padStart(2, "0")}`), key, (x) => {
+    const v = car(x); const n = v ? pick(v) : undefined;
+    return n === undefined ? BLANK : key === "line28" ? String(n) : money(n);
+  }, key === "line28"));
+  // Part V, seniors (lines 31–37): only when the senior deduction applies.
+  const sen = (x: ReturnLines) => (a(x)?.seniorApplies ? a(x) : undefined);
+  const samt = (pick: (s: NonNullable<ReturnLines["schedule1A"]>) => number) => (x: ReturnLines) => (sen(x) ? money(pick(sen(x)!)) : BLANK);
+  add(F("P2.f2_15"), "line31", samt((s) => s.magi));
+  add(F("P2.f2_16"), "line32", (x, t) => (sen(x) ? money(t.filingStatus === "MFJ" ? 150000 : 75000) : BLANK));
+  add(F("P2.f2_17"), "line33", samt((s) => s.line33));
+  add(F("P2.f2_18"), "line34", (x) => (sen(x)?.line33 ? money(sen(x)!.line34) : BLANK));
+  add(F("P2.f2_19"), "line35", samt((s) => s.line35));
+  add(F("P2.f2_20"), "line36a", (x) => moneyOrBlank(sen(x)?.line36a));
+  add(F("P2.f2_21"), "line36b", (x) => moneyOrBlank(sen(x)?.line36b));
+  add(F("P2.f2_22"), "line37", samt((s) => s.line37));
   add(F("P2.f2_23"), "line38", amt((s) => s.line38));
   return build();
 }

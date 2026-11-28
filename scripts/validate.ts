@@ -501,6 +501,46 @@ function documentChecks(t: FakeTaxpayer, docs: Record<string, FormRun[]>): Check
   }
   const s1a = keyed(docs.f1040s1a?.[0], "f1040s1a");
   if (docs.f1040s1a?.length) tie(2, "sch1A-38-equals-1040-13b", n0(s1a("line38")), n0(line("line13b")), "Schedule 1-A line 38 vs 1040 line 13b");
+  // ── Schedule 1-A Parts II–IV from the filled W-2s and the household's loans (2025 on) ──
+  if (t.taxYear >= 2025) {
+    const w2k = (docs.fw2 ?? []).map((run, i) => ({ k: keyed(run, "fw2"), w: includedW2s(t)[i] }));
+    // W-2 box 7 is the drawn tips and box 14 shows the overtime premium.
+    const w2bad = w2k.filter(({ k, w }) => !near(n0(k("CopyB.box7")), w?.socialSecurityTips ?? 0)
+      || !near(n0((k("CopyB.box14") ?? "").replace(/^FLSA OT PREM /, "")), w?.qualifiedOvertime ?? 0));
+    checks.push({ phase: 2, id: "w2-box7-box14-from-household", ok: !w2bad.length, detail: w2bad.length ? `${w2bad.length} W-2(s) off` : `${w2k.length} W-2(s)` });
+    const married = t.filingStatus === "MFJ" || t.filingStatus === "MFS";
+    const okStatus = !married || t.filingStatus === "MFJ";
+    const magi = n0(line("line11"));   // Schedule 1-A line 3: AGI (no exclusions modelled)
+    const phase = (allowed: number, threshold: number, per: number, up: boolean) => {
+      const over = magi - threshold; if (over <= 0) return allowed;
+      return Math.max(0, round2(allowed - (up ? Math.ceil(over / 1000) : Math.floor(over / 1000)) * per));
+    };
+    const joint = t.filingStatus === "MFJ";
+    // Tips: box 7 of W-2s in a tipped occupation; $25,000 per return; $100 per full $1,000 over $150,000 / $300,000.
+    const tips = round2(w2k.filter(({ w }) => w?.tippedOccupation).reduce((a, { k }) => a + n0(k("CopyB.box7")), 0));
+    const wantTips = okStatus && tips > 0 ? phase(Math.min(tips, 25000), joint ? 300000 : 150000, 100, false) : 0;
+    // Overtime: box 14 premiums; $12,500 ($25,000 joint); same phase-out as tips.
+    const ot = round2(w2k.reduce((a, { k }) => a + n0((k("CopyB.box14") ?? "").replace(/^FLSA OT PREM /, "")), 0));
+    const wantOt = okStatus && ot > 0 ? phase(Math.min(ot, joint ? 25000 : 12500), joint ? 300000 : 150000, 100, false) : 0;
+    // Car loan interest: loans originated after 2024 for new, U.S.-assembled personal vehicles; $10,000;
+    // $200 per $1,000 (or part) over $100,000 / $200,000.
+    const loans = (t.vehicleLoans ?? []).filter((l) => Number(l.originated.split("/")[2]) >= 2025 && l.newVehicle && l.usAssembly && l.personalUse && l.firstLien);
+    const interest = round2(loans.reduce((a, l) => a + l.interestPaid - (l.deductedElsewhere ?? 0), 0));
+    const wantCar = loans.length ? phase(Math.min(interest, 10000), joint ? 200000 : 100000, 200, true) : 0;
+    if (docs.f1040s1a?.length || wantTips || wantOt || wantCar) {
+      const bad: string[] = [];
+      if (!near(n0(s1a("line4c")), okStatus ? tips : 0)) bad.push(`4c ${s1a("line4c")} vs ${tips}`);
+      if (!near(n0(s1a("line13")), wantTips)) bad.push(`13 ${s1a("line13")} vs ${wantTips}`);
+      if (!near(n0(s1a("line14a")), okStatus ? ot : 0)) bad.push(`14a ${s1a("line14a")} vs ${ot}`);
+      if (!near(n0(s1a("line21")), wantOt)) bad.push(`21 ${s1a("line21")} vs ${wantOt}`);
+      const vins = [s1a("line22a.vin"), s1a("line22b.vin")].filter(Boolean);
+      if (vins.join(",") !== loans.slice(0, 2).map((l) => l.vin).join(",")) bad.push(`22 VINs ${vins.join(",")}`);
+      if (!near(n0(s1a("line30")), wantCar)) bad.push(`30 ${s1a("line30")} vs ${wantCar}`);
+      const sum38 = round2(n0(s1a("line13")) + n0(s1a("line21")) + n0(s1a("line30")) + n0(s1a("line37")));
+      if (!near(n0(s1a("line38")), sum38)) bad.push(`38 ${s1a("line38")} vs 13 + 21 + 30 + 37 = ${sum38}`);
+      checks.push({ phase: 2, id: "sch1A-parts-II-IV-from-household", ok: !bad.length, detail: bad.join("; ") || `tips ${wantTips}, overtime ${wantOt}, car loan ${wantCar}` });
+    }
+  }
   const s2 = keyed(docs.f1040s2?.[0], "f1040s2");
   if (docs.f1040s2?.length) tie(2, "sch2-21-equals-1040-23", n0(s2("line21")), n0(line("line23")), "Schedule 2 line 21 vs 1040 line 23");
   // ── Forms 1099-R → 1040 lines 4a–5b, 25b and Schedule 2 line 8 ─────────────
