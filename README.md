@@ -6,6 +6,8 @@ Covers **173 IRS and SSA forms** across 14 categories — from core 1040 returns
 
 ---
 
+> **Generating returns for review?** See [HOW_TO_GENERATE_REVIEW_RETURNS.md](HOW_TO_GENERATE_REVIEW_RETURNS.md).
+
 ## Table of Contents
 
 - [Features](#features)
